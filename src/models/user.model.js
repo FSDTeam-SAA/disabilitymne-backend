@@ -34,6 +34,16 @@ const heightMeasurementSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const mediaAssetSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true, trim: true },
+    publicId: { type: String, default: "", trim: true },
+    mimetype: { type: String, default: "", trim: true },
+    size: { type: Number, default: 0, min: 0 },
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     role: {
@@ -48,6 +58,12 @@ const userSchema = new mongoose.Schema(
       trim: true,
       maxlength: [80, "First name should not exceed 80 characters"],
     },
+    lastName: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [80, "Last name should not exceed 80 characters"],
+    },
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -60,6 +76,21 @@ const userSchema = new mongoose.Schema(
       default: "",
       trim: true,
       maxlength: [40, "Phone number should not exceed 40 characters"],
+    },
+    bio: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [1000, "Bio should not exceed 1000 characters"],
+    },
+    preferredLanguage: {
+      type: String,
+      enum: ["en", "sr"],
+      default: "en",
+    },
+    profileImage: {
+      type: mediaAssetSchema,
+      default: null,
     },
     password: {
       type: String,
@@ -143,8 +174,24 @@ const userSchema = new mongoose.Schema(
       default: null,
       select: false,
     },
+    refreshTokenHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    refreshTokenExpiresAt: {
+      type: Date,
+      default: null,
+      select: false,
+    },
     passwordChangedAt: Date,
     lastLoginAt: Date,
+    accountStatus: {
+      type: String,
+      enum: ["active", "deactivated", "suspended"],
+      default: "active",
+      index: true,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -195,6 +242,30 @@ userSchema.methods.isPasswordResetOtpValid = function isPasswordResetOtpValid(ot
 userSchema.methods.clearPasswordResetOtp = function clearPasswordResetOtp() {
   this.passwordResetOtpHash = null;
   this.passwordResetOtpExpiresAt = null;
+};
+
+userSchema.methods.setRefreshToken = function setRefreshToken(refreshToken, ttlMs) {
+  const hash = crypto.createHash("sha256").update(String(refreshToken)).digest("hex");
+  this.refreshTokenHash = hash;
+  this.refreshTokenExpiresAt = new Date(Date.now() + ttlMs);
+};
+
+userSchema.methods.isRefreshTokenValid = function isRefreshTokenValid(refreshToken) {
+  if (!this.refreshTokenHash || !this.refreshTokenExpiresAt) {
+    return false;
+  }
+
+  if (this.refreshTokenExpiresAt.getTime() < Date.now()) {
+    return false;
+  }
+
+  const hash = crypto.createHash("sha256").update(String(refreshToken)).digest("hex");
+  return hash === this.refreshTokenHash;
+};
+
+userSchema.methods.clearRefreshToken = function clearRefreshToken() {
+  this.refreshTokenHash = null;
+  this.refreshTokenExpiresAt = null;
 };
 
 export const User = mongoose.model("User", userSchema);

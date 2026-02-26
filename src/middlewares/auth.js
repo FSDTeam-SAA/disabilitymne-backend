@@ -1,7 +1,7 @@
 import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
-import { verifyToken } from "../utils/authToken.js";
+import { verifyAccessToken } from "../utils/authToken.js";
 import { User } from "../models/user.model.js";
 
 export const protect = catchAsync(async (req, res, next) => {
@@ -18,13 +18,14 @@ export const protect = catchAsync(async (req, res, next) => {
 
   let decoded;
   try {
-    decoded = verifyToken(token);
+    decoded = verifyAccessToken(token);
   } catch {
     throw new AppError("Invalid or expired token. Please log in again.", httpStatus.UNAUTHORIZED);
   }
 
   const currentUser = await User.findById(decoded.id);
-  if (!currentUser || !currentUser.isActive) {
+  const accountStatus = currentUser?.accountStatus || "active";
+  if (!currentUser || !currentUser.isActive || accountStatus !== "active") {
     throw new AppError("User no longer exists or is inactive.", httpStatus.UNAUTHORIZED);
   }
 

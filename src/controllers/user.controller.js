@@ -2,9 +2,51 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
-import { getPlanByKey } from "../constants/subscriptionPlans.js";
+import { getPlanByKey } from "../services/subscriptionPlan.service.js";
 
 const MAX_ONBOARDING_STEP = 8;
+const ALLOWED_LANGUAGE_CODES = new Set(["en", "sr"]);
+
+const asString = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+};
+
+const normalizeProfileImage = (value) => {
+  if (value === null || value === "") {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const url = asString(value);
+    return url
+      ? {
+        url,
+        publicId: "",
+        mimetype: "",
+        size: 0,
+      }
+      : null;
+  }
+
+  if (typeof value !== "object") {
+    throw new AppError("profileImage must be a string URL or media object.", httpStatus.BAD_REQUEST);
+  }
+
+  const url = asString(value.url || value.path || value.secure_url);
+  if (!url) {
+    throw new AppError("profileImage.url is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const size = Number(value.size);
+
+  return {
+    url,
+    publicId: asString(value.publicId || value.public_id || value.filename),
+    mimetype: asString(value.mimetype || value.resource_type || value.format),
+    size: Number.isFinite(size) && size > 0 ? size : 0,
+  };
+};
 
 const applyOnboardingUpdates = (user, payload) => {
   const updates = payload || {};
@@ -13,8 +55,28 @@ const applyOnboardingUpdates = (user, payload) => {
     user.firstName = updates.firstName;
   }
 
+  if (Object.hasOwn(updates, "lastName")) {
+    user.lastName = updates.lastName;
+  }
+
   if (Object.hasOwn(updates, "phone")) {
     user.phone = updates.phone;
+  }
+
+  if (Object.hasOwn(updates, "bio")) {
+    user.bio = updates.bio;
+  }
+
+  if (Object.hasOwn(updates, "preferredLanguage")) {
+    const preferredLanguage = asString(updates.preferredLanguage).toLowerCase();
+    if (!ALLOWED_LANGUAGE_CODES.has(preferredLanguage)) {
+      throw new AppError("preferredLanguage must be one of: en, sr.", httpStatus.BAD_REQUEST);
+    }
+    user.preferredLanguage = preferredLanguage;
+  }
+
+  if (Object.hasOwn(updates, "profileImage")) {
+    user.profileImage = normalizeProfileImage(updates.profileImage);
   }
 
   if (Object.hasOwn(updates, "gender")) {
@@ -110,7 +172,7 @@ export const selectPlan = catchAsync(async (req, res) => {
     throw new AppError("planKey is required.", httpStatus.BAD_REQUEST);
   }
 
-  const plan = getPlanByKey(planKey);
+  const plan = await getPlanByKey(planKey);
   if (!plan) {
     throw new AppError("Invalid planKey provided.", httpStatus.BAD_REQUEST);
   }

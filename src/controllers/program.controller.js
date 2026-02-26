@@ -188,6 +188,32 @@ const normalizeMediaList = (rawValue) => {
   return single ? [single] : [];
 };
 
+const pickFirstProvided = (...values) => values.find((value) => value !== undefined);
+
+const normalizeStringList = (rawValue) => {
+  const value = parseMaybeJson(rawValue);
+
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => asNonEmptyString(item))
+      .map((item) => item.replace(/^[-\u2022*\u00B7]+\s*/, ""))
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n|,/)
+      .map((item) => item.trim().replace(/^[-\u2022*\u00B7]+\s*/, ""))
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
 const normalizeDefaultSets = (rawValue) => {
   const value = parseMaybeJson(rawValue);
 
@@ -226,6 +252,10 @@ const normalizeExercise = (rawExercise, index) => {
       name,
       order: index + 1,
       description: "",
+      keyBenefits: [],
+      demoVideos: [],
+      exerciseImages: [],
+      targetMuscleImages: [],
       defaultSets: [],
     };
   }
@@ -241,8 +271,37 @@ const normalizeExercise = (rawExercise, index) => {
 
   const order = numberOrUndefined(parsed.order, "exercise.order", 1) ?? index + 1;
   const description = asNonEmptyString(parsed.description || parsed.exerciseDescription);
-  const demoVideo = normalizeMediaAsset(parsed.demoVideo || parsed.video || parsed.demo);
-  const image = normalizeMediaAsset(parsed.image || parsed.thumbnail || parsed.exerciseImage);
+  const keyBenefits = normalizeStringList(
+    pickFirstProvided(parsed.keyBenefits, parsed.benefits, parsed.keyBenefit, parsed.bulletPoints)
+  );
+  const demoVideos = normalizeMediaList(
+    pickFirstProvided(parsed.demoVideos, parsed.exerciseDemoVideos, parsed.exerciseVideos, parsed.videos)
+  );
+  const legacyDemoVideo = normalizeMediaAsset(pickFirstProvided(parsed.demoVideo, parsed.video, parsed.demo));
+  if (demoVideos.length === 0 && legacyDemoVideo) {
+    demoVideos.push(legacyDemoVideo);
+  }
+
+  const exerciseImages = normalizeMediaList(
+    pickFirstProvided(parsed.exerciseImages, parsed.images, parsed.exerciseImageList)
+  );
+  const legacyExerciseImage = normalizeMediaAsset(
+    pickFirstProvided(parsed.image, parsed.thumbnail, parsed.exerciseImage)
+  );
+  if (exerciseImages.length === 0 && legacyExerciseImage) {
+    exerciseImages.push(legacyExerciseImage);
+  }
+
+  const targetMuscleImages = normalizeMediaList(
+    pickFirstProvided(
+      parsed.targetMuscleImages,
+      parsed.targetMuscleImage,
+      parsed.targetMuscleGroupImages,
+      parsed.targetMuscleGroupImage,
+      parsed.muscleImages,
+      parsed.muscleImage
+    )
+  );
   const defaultSets = normalizeDefaultSets(parsed.defaultSets || parsed.sets);
   const durationSeconds = numberOrUndefined(parsed.durationSeconds, "exercise.durationSeconds", 0);
   const calories = numberOrUndefined(parsed.calories, "exercise.calories", 0);
@@ -251,11 +310,19 @@ const normalizeExercise = (rawExercise, index) => {
     name,
     description,
     order,
+    keyBenefits,
+    demoVideos,
+    exerciseImages,
+    targetMuscleImages,
     defaultSets,
   };
 
-  if (demoVideo) normalizedExercise.demoVideo = demoVideo;
-  if (image) normalizedExercise.image = image;
+  if (demoVideos.length > 0) {
+    normalizedExercise.demoVideo = demoVideos[0];
+  }
+  if (exerciseImages.length > 0) {
+    normalizedExercise.image = exerciseImages[0];
+  }
   if (durationSeconds !== undefined) normalizedExercise.durationSeconds = durationSeconds;
   if (calories !== undefined) normalizedExercise.calories = calories;
 
@@ -379,16 +446,39 @@ const buildProgramSummary = (program) => {
 
 const buildProgramDetails = (program) => ({
   ...buildProgramSummary(program),
-  exercises: (program.exercises || []).map((exercise) => ({
-    name: exercise.name,
-    description: exercise.description,
-    order: exercise.order,
-    demoVideo: exercise.demoVideo || null,
-    image: exercise.image || null,
-    defaultSets: exercise.defaultSets || [],
-    durationSeconds: exercise.durationSeconds ?? null,
-    calories: exercise.calories ?? null,
-  })),
+  exercises: (program.exercises || []).map((exercise) => {
+    const demoVideos =
+      Array.isArray(exercise.demoVideos) && exercise.demoVideos.length > 0
+        ? exercise.demoVideos
+        : exercise.demoVideo
+          ? [exercise.demoVideo]
+          : [];
+
+    const exerciseImages =
+      Array.isArray(exercise.exerciseImages) && exercise.exerciseImages.length > 0
+        ? exercise.exerciseImages
+        : exercise.image
+          ? [exercise.image]
+          : [];
+
+    const targetMuscleImages = Array.isArray(exercise.targetMuscleImages) ? exercise.targetMuscleImages : [];
+
+    return {
+      name: exercise.name,
+      description: exercise.description,
+      order: exercise.order,
+      keyBenefits: exercise.keyBenefits || [],
+      demoVideos,
+      demoVideo: demoVideos[0] || null,
+      exerciseImages,
+      image: exerciseImages[0] || null,
+      targetMuscleImages,
+      targetMuscleImage: targetMuscleImages[0] || null,
+      defaultSets: exercise.defaultSets || [],
+      durationSeconds: exercise.durationSeconds ?? null,
+      calories: exercise.calories ?? null,
+    };
+  }),
 });
 
 const buildPagination = (page, limit, total) => ({

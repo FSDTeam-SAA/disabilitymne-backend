@@ -3,7 +3,7 @@ import crypto from "crypto";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { Payment } from "../models/payment.model.js";
-import { SUBSCRIPTION_PLANS, getPlanByKey } from "../constants/subscriptionPlans.js";
+import { getActivePlans, getPlanByKey } from "../services/subscriptionPlan.service.js";
 import { serializeUser } from "../utils/serializeUser.js";
 
 const addMonths = (date, months) => {
@@ -109,9 +109,11 @@ const activateUserPlan = (user, plan) => {
 };
 
 export const getPlans = catchAsync(async (req, res) => {
+  const plans = await getActivePlans();
+
   res.status(httpStatus.OK).json({
     success: true,
-    data: SUBSCRIPTION_PLANS,
+    data: plans,
   });
 });
 
@@ -124,7 +126,7 @@ export const checkout = catchAsync(async (req, res) => {
     throw new AppError("planKey is required.", httpStatus.BAD_REQUEST);
   }
 
-  const plan = getPlanByKey(planKey);
+  const plan = await getPlanByKey(planKey);
   if (!plan) {
     throw new AppError("Invalid planKey provided.", httpStatus.BAD_REQUEST);
   }

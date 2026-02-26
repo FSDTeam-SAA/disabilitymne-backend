@@ -2,11 +2,17 @@ import crypto from "crypto";
 import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
-import { signToken } from "../utils/authToken.js";
+import {
+  getRefreshTokenExpiresIn,
+  parseExpiresInToMs,
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+} from "../utils/authToken.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { User } from "../models/user.model.js";
 
-const getNormalizedEmail = (email) => String(email || "").trim().toLowerCase();
+const getNormalizedEmail = (email) => String(email || "").trim().toLowerCase(); 
 
 const getOtpExpiryMinutes = () => {
   const parsed = Number(process.env.OTP_EXPIRES_MINUTES || 10);
@@ -14,6 +20,51 @@ const getOtpExpiryMinutes = () => {
 };
 
 const createOtp = () => String(crypto.randomInt(100000, 1000000));
+
+const getRefreshTtlMs = () => parseExpiresInToMs(getRefreshTokenExpiresIn(), 30 * 24 * 60 * 60 * 1000);
+
+const issueAndPersistTokens = async (user, options = {}) => {
+  const { updateLastLogin = false, saveOptions = { validateBeforeSave: false } } = options;
+
+  const accessToken = signAccessToken(user._id.toString());
+  const refreshToken = signRefreshToken(user._id.toString());
+
+  user.setRefreshToken(refreshToken, getRefreshTtlMs());
+
+  if (updateLastLogin) {
+    user.lastLoginAt = new Date();
+  }
+
+  await user.save(saveOptions);
+
+  return { accessToken, refreshToken };
+};
+
+const authResponseData = (user, tokens) => ({
+  token: tokens.accessToken,
+  accessToken: tokens.accessToken,
+  refreshToken: tokens.refreshToken,
+  user: serializeUser(user),
+});
+
+const extractRefreshTokenFromRequest = (req) => {
+  const fromBody = String(req.body?.refreshToken || "").trim();
+  if (fromBody) {
+    return fromBody;
+  }
+
+  const fromHeader = String(req.headers["x-refresh-token"] || "").trim();
+  if (fromHeader) {
+    return fromHeader;
+  }
+
+  const authHeader = String(req.headers.authorization || "").trim();
+  if (authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+
+  return "";
+};
 
 export const register = catchAsync(async (req, res) => {
   const { firstName, email, phone, password, confirmPassword } = req.body;
@@ -38,16 +89,12 @@ export const register = catchAsync(async (req, res) => {
     phone,
     password,
   });
-
-  const token = signToken(user._id.toString());
+  const tokens = await issueAndPersistTokens(user, { updateLastLogin: true });
 
   res.status(httpStatus.CREATED).json({
     success: true,
     message: "Account created successfully.",
-    data: {
-      token,
-      user: serializeUser(user),
-    },
+    data: authResponseData(user, tokens),
   });
 });
 
@@ -65,22 +112,16 @@ export const login = catchAsync(async (req, res) => {
     throw new AppError("Invalid email or password.", httpStatus.UNAUTHORIZED);
   }
 
-  if (!user.isActive) {
-    throw new AppError("Your account is inactive. Contact support.", httpStatus.FORBIDDEN);
+  const accountStatus = user.accountStatus || (user.isActive ? "active" : "deactivated");
+  if (!user.isActive || accountStatus !== "active") {
+    throw new AppError("Your account is not active. Contact support.", httpStatus.FORBIDDEN);
   }
-
-  user.lastLoginAt = new Date();
-  await user.save({ validateBeforeSave: false });
-
-  const token = signToken(user._id.toString());
+  const tokens = await issueAndPersistTokens(user, { updateLastLogin: true });
 
   res.status(httpStatus.OK).json({
     success: true,
     message: "Logged in successfully.",
-    data: {
-      token,
-      user: serializeUser(user),
-    },
+    data: authResponseData(user, tokens),
   });
 });
 
@@ -155,16 +196,66 @@ export const resetPassword = catchAsync(async (req, res) => {
 
   user.password = newPassword;
   user.clearPasswordResetOtp();
-  await user.save();
-
-  const token = signToken(user._id.toString());
+  const tokens = await issueAndPersistTokens(user, { saveOptions: {} });
 
   res.status(httpStatus.OK).json({
     success: true,
     message: "Password reset successful.",
-    data: {
-      token,
-      user: serializeUser(user),
-    },
+    data: authResponseData(user, tokens),
+  });
+});
+
+export const refreshAccessToken = catchAsync(async (req, res) => {
+  const refreshToken = extractRefreshTokenFromRequest(req);
+
+  if (!refreshToken) {
+    throw new AppError("refreshToken is required.", httpStatus.BAD_REQUEST);
+  }
+
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(refreshToken);
+  } catch {
+    throw new AppError("Invalid or expired refresh token.", httpStatus.UNAUTHORIZED);
+  }
+
+  if (decoded.type && decoded.type !== "refresh") {
+    throw new AppError("Invalid refresh token type.", httpStatus.UNAUTHORIZED);
+  }
+
+  const user = await User.findById(decoded.id).select("+refreshTokenHash +refreshTokenExpiresAt");
+
+  const accountStatus = user?.accountStatus || (user?.isActive ? "active" : "deactivated");
+  if (!user || !user.isActive || accountStatus !== "active") {
+    throw new AppError("User no longer exists or account is inactive.", httpStatus.UNAUTHORIZED);
+  }
+
+  if (user.passwordChangedAt) {
+    const passwordChangedAtSec = Math.floor(user.passwordChangedAt.getTime() / 1000);
+    if (decoded.iat < passwordChangedAtSec) {
+      throw new AppError("Password changed recently. Please log in again.", httpStatus.UNAUTHORIZED);
+    }
+  }
+
+  if (!user.isRefreshTokenValid(refreshToken)) {
+    throw new AppError("Refresh token is no longer valid. Please log in again.", httpStatus.UNAUTHORIZED);
+  }
+
+  const tokens = await issueAndPersistTokens(user);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Token refreshed successfully.",
+    data: authResponseData(user, tokens),
+  });
+});
+
+export const logout = catchAsync(async (req, res) => {
+  req.user.clearRefreshToken();
+  await req.user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Logged out successfully.",
   });
 });

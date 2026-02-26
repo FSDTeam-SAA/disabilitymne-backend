@@ -1,0 +1,636 @@
+import mongoose from "mongoose";
+import httpStatus from "http-status";
+import AppError from "../utils/AppError.js";
+import { catchAsync } from "../utils/catchAsync.js";
+import { serializeUser } from "../utils/serializeUser.js";
+import { User } from "../models/user.model.js";
+import { Payment } from "../models/payment.model.js";
+import { SubscriptionPlan } from "../models/subscriptionPlan.model.js";
+import { PLAN_KEYS, SUBSCRIPTION_PLANS } from "../constants/subscriptionPlans.js";
+import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
+
+const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
+
+const PLAN_LABELS = {
+  free_trial: "Free Trial user",
+  monthly_plan: "Monthly user",
+  six_month_plan: "Six Month user",
+  premium_plan: "Premium user",
+};
+
+const parseMaybeJson = (value) => {
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+};
+
+const asString = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+};
+
+const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const parsePage = (value) => {
+  const page = Number(value || 1);
+  return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+};
+
+const parseLimit = (value, defaultValue = 20, maxValue = 100) => {
+  const limit = Number(value || defaultValue);
+  if (!Number.isFinite(limit) || limit <= 0) return defaultValue;
+  return Math.min(Math.floor(limit), maxValue);
+};
+
+const parseNumber = (value, fieldName, min = 0, required = false) => {
+  if (value === undefined || value === null || value === "") {
+    if (required) {
+      throw new AppError(`${fieldName} is required.`, httpStatus.BAD_REQUEST);
+    }
+    return undefined;
+  }
+
+  let numeric = value;
+  if (typeof value === "string") {
+    const matched = value.match(/-?\d+(\.\d+)?/);
+    if (!matched) {
+      throw new AppError(`${fieldName} must be numeric.`, httpStatus.BAD_REQUEST);
+    }
+    numeric = matched[0];
+  }
+
+  const parsed = Number(numeric);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    throw new AppError(`${fieldName} must be a number >= ${min}.`, httpStatus.BAD_REQUEST);
+  }
+
+  return parsed;
+};
+
+const parseBoolean = (value, fieldName) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase().trim();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  throw new AppError(`${fieldName} must be a boolean.`, httpStatus.BAD_REQUEST);
+};
+
+const normalizePlanKey = (value, required = true) => {
+  const key = asString(value).toLowerCase();
+  if (!key) {
+    if (required) {
+      throw new AppError("plan key is required.", httpStatus.BAD_REQUEST);
+    }
+    return "";
+  }
+
+  if (!PLAN_KEYS.includes(key)) {
+    throw new AppError(`Unsupported plan key "${key}".`, httpStatus.BAD_REQUEST);
+  }
+
+  return key;
+};
+
+const normalizeFeatures = (value) => {
+  const parsed = parseMaybeJson(value);
+
+  if (Array.isArray(parsed)) {
+    return parsed.map((item) => asString(item)).filter(Boolean);
+  }
+
+  if (typeof parsed === "string") {
+    return parsed
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+const normalizeAccountStatus = (value) => {
+  const status = asString(value).toLowerCase();
+  if (!ACCOUNT_STATUSES.has(status)) {
+    throw new AppError("accountStatus must be one of: active, deactivated, suspended.", httpStatus.BAD_REQUEST);
+  }
+
+  return status;
+};
+
+const formatCurrencyAmount = (amount) => Number(amount || 0).toFixed(2);
+
+const buildMonthLabels = (months = 12) => {
+  const labels = [];
+  const now = new Date();
+
+  for (let i = months - 1; i >= 0; i -= 1) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    labels.push({
+      year: d.getFullYear(),
+      month: d.getMonth() + 1,
+      label: d.toLocaleString("en-US", { month: "short" }),
+    });
+  }
+
+  return labels;
+};
+
+const subscriptionBadge = (user) => {
+  const key = user.selectedPlan || "free_trial";
+  return PLAN_LABELS[key] || "Free Trial user";
+};
+
+const toUserRow = (user) => ({
+  id: user._id,
+  name: `${asString(user.firstName)} ${asString(user.lastName)}`.trim() || user.firstName,
+  email: user.email,
+  phone: user.phone || "",
+  createdAt: user.createdAt,
+  subscription: subscriptionBadge(user),
+  selectedPlan: user.selectedPlan || "free_trial",
+  mobilityType: user.mobilityType || "",
+  status: user.accountStatus || (user.isActive ? "active" : "deactivated"),
+  isActive: Boolean(user.isActive),
+});
+
+const toPlanResponse = (plan) => ({
+  key: plan.key,
+  name: plan.name,
+  price: plan.price,
+  currency: plan.currency,
+  durationLabel: plan.durationLabel,
+  durationMonths: plan.durationMonths,
+  trialDays: plan.trialDays,
+  features: plan.features || [],
+  isPopular: Boolean(plan.isPopular),
+  sortOrder: plan.sortOrder,
+  isActive: Boolean(plan.isActive),
+  deletedAt: plan.deletedAt || null,
+  createdAt: plan.createdAt,
+  updatedAt: plan.updatedAt,
+});
+
+const getDefaultPlanByKey = (planKey) => SUBSCRIPTION_PLANS.find((plan) => plan.key === planKey);
+
+const ensurePlanDoc = async (planKey) => {
+  await ensureDefaultPlansIfEmpty();
+
+  let planDoc = await SubscriptionPlan.findOne({ key: planKey });
+  if (!planDoc) {
+    const defaultPlan = getDefaultPlanByKey(planKey);
+    if (!defaultPlan) {
+      throw new AppError("Plan not found.", httpStatus.NOT_FOUND);
+    }
+
+    planDoc = await SubscriptionPlan.create({
+      key: defaultPlan.key,
+      name: defaultPlan.name,
+      price: defaultPlan.price,
+      currency: defaultPlan.currency || "USD",
+      durationLabel: defaultPlan.trialDays ? `${defaultPlan.trialDays} days` : `${defaultPlan.durationMonths || 1} months`,
+      durationMonths: defaultPlan.durationMonths || 0,
+      trialDays: defaultPlan.trialDays || 0,
+      features: defaultPlan.features || [],
+      isPopular: defaultPlan.key === "premium_plan",
+      sortOrder: PLAN_KEYS.indexOf(defaultPlan.key) + 1,
+      isActive: true,
+    });
+  }
+
+  return planDoc;
+};
+
+export const getDashboardOverview = catchAsync(async (req, res) => {
+  const [totalUsers, monthlyUsers, sixMonthUsers, premiumUsers, revenueAgg, recentUsers] = await Promise.all([
+    User.countDocuments({ role: "user" }),
+    User.countDocuments({ role: "user", selectedPlan: "monthly_plan" }),
+    User.countDocuments({ role: "user", selectedPlan: "six_month_plan" }),
+    User.countDocuments({ role: "user", selectedPlan: "premium_plan" }),
+    Payment.aggregate([{ $match: { status: "succeeded" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
+    User.find({ role: "user" })
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive"),
+  ]);
+
+  const totalRevenue = revenueAgg[0]?.total || 0;
+
+  const surveyAgg = await User.aggregate([
+    { $match: { role: "user", selectedPlan: { $in: PLAN_KEYS } } },
+    { $group: { _id: "$selectedPlan", count: { $sum: 1 } } },
+  ]);
+
+  const surveyTotal = surveyAgg.reduce((sum, item) => sum + item.count, 0);
+  const survey = PLAN_KEYS.map((key) => {
+    const found = surveyAgg.find((item) => item._id === key);
+    const count = found ? found.count : 0;
+    const percentage = surveyTotal > 0 ? Number(((count / surveyTotal) * 100).toFixed(2)) : 0;
+    return { key, label: PLAN_LABELS[key], count, percentage };
+  });
+
+  const monthLabels = buildMonthLabels(12);
+  const monthStart = new Date(monthLabels[0].year, monthLabels[0].month - 1, 1);
+
+  const revenueByMonthAgg = await Payment.aggregate([
+    { $match: { status: "succeeded", createdAt: { $gte: monthStart } } },
+    {
+      $group: {
+        _id: { year: { $year: "$createdAt" }, month: { $month: "$createdAt" } },
+        total: { $sum: "$amount" },
+      },
+    },
+  ]);
+
+  const earningsSeries = monthLabels.map((month) => {
+    const found = revenueByMonthAgg.find((item) => item._id.year === month.year && item._id.month === month.month);
+    return {
+      label: month.label,
+      revenue: Number((found?.total || 0).toFixed(2)),
+    };
+  });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: {
+      totals: {
+        totalUsers,
+        totalMonthlyUsers: monthlyUsers,
+        totalSixMonthUsers: sixMonthUsers,
+        totalPremiumUsers: premiumUsers,
+        totalRevenue: Number(totalRevenue.toFixed(2)),
+        totalRevenueDisplay: formatCurrencyAmount(totalRevenue),
+      },
+      earningsSeries,
+      subscriptionSurvey: survey,
+      recentUsers: recentUsers.map(toUserRow),
+    },
+  });
+});
+
+export const getAdminUsers = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+
+  const filter = { role: "user" };
+
+  if (req.query.search) {
+    const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
+    filter.$or = [
+      { firstName: pattern },
+      { lastName: pattern },
+      { email: pattern },
+      { phone: pattern },
+    ];
+  }
+
+  if (req.query.subscription) {
+    filter.selectedPlan = normalizePlanKey(req.query.subscription);
+  }
+
+  if (req.query.mobilityType) {
+    filter.mobilityType = asString(req.query.mobilityType);
+  }
+
+  if (req.query.status) {
+    const status = normalizeAccountStatus(req.query.status);
+    if (status === "active") {
+      filter.$and = [...(filter.$and || []), { $or: [{ accountStatus: "active" }, { accountStatus: { $exists: false } }] }];
+      filter.isActive = true;
+    } else {
+      filter.accountStatus = status;
+    }
+  }
+
+  const allowedSortFields = new Set(["createdAt", "firstName", "email", "selectedPlan", "accountStatus"]);
+  const sortField = allowedSortFields.has(asString(req.query.sortBy)) ? asString(req.query.sortBy) : "createdAt";
+  const sortOrder = asString(req.query.sortOrder).toLowerCase() === "asc" ? 1 : -1;
+
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .sort({ [sortField]: sortOrder, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive"),
+    User.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: users.map(toUserRow),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});
+
+export const updateAdminUserStatus = catchAsync(async (req, res) => {
+  const { userId } = req.params;
+
+  if (!mongoose.isValidObjectId(userId)) {
+    throw new AppError("Invalid user id.", httpStatus.BAD_REQUEST);
+  }
+
+  const accountStatus = normalizeAccountStatus(req.body.accountStatus);
+
+  const user = await User.findById(userId).select("+refreshTokenHash +refreshTokenExpiresAt");
+  if (!user || user.role !== "user") {
+    throw new AppError("User not found.", httpStatus.NOT_FOUND);
+  }
+
+  user.accountStatus = accountStatus;
+  user.isActive = accountStatus === "active";
+
+  if (!user.isActive) {
+    user.clearRefreshToken();
+  }
+
+  await user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "User status updated successfully.",
+    data: toUserRow(user),
+  });
+});
+
+export const deleteAdminUser = catchAsync(async (req, res) => {
+  const { userId } = req.params;
+
+  if (!mongoose.isValidObjectId(userId)) {
+    throw new AppError("Invalid user id.", httpStatus.BAD_REQUEST);
+  }
+
+  const user = await User.findById(userId).select("+refreshTokenHash +refreshTokenExpiresAt");
+  if (!user || user.role !== "user") {
+    throw new AppError("User not found.", httpStatus.NOT_FOUND);
+  }
+
+  user.accountStatus = "deactivated";
+  user.isActive = false;
+  user.clearRefreshToken();
+  await user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "User deactivated successfully.",
+  });
+});
+
+export const getAdminSettingsProfile = catchAsync(async (req, res) => {
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: serializeUser(req.user),
+  });
+});
+
+export const updateAdminSettingsProfile = catchAsync(async (req, res) => {
+  const admin = await User.findById(req.user._id);
+  if (!admin) {
+    throw new AppError("Admin not found.", httpStatus.NOT_FOUND);
+  }
+
+  const emailInput = asString(req.body.email).toLowerCase();
+  if (emailInput && emailInput !== admin.email) {
+    const existing = await User.findOne({ email: emailInput, _id: { $ne: admin._id } });
+    if (existing) {
+      throw new AppError("Email is already in use.", httpStatus.CONFLICT);
+    }
+    admin.email = emailInput;
+  }
+
+  if (Object.hasOwn(req.body, "firstName")) admin.firstName = asString(req.body.firstName);
+  if (Object.hasOwn(req.body, "lastName")) admin.lastName = asString(req.body.lastName);
+  if (Object.hasOwn(req.body, "phone")) admin.phone = asString(req.body.phone);
+  if (Object.hasOwn(req.body, "bio")) admin.bio = asString(req.body.bio);
+
+  await admin.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Profile updated successfully.",
+    data: serializeUser(admin),
+  });
+});
+
+export const updateAdminSettingsPassword = catchAsync(async (req, res) => {
+  const { currentPassword, newPassword, confirmNewPassword } = req.body;
+
+  if (!currentPassword || !newPassword || !confirmNewPassword) {
+    throw new AppError("currentPassword, newPassword and confirmNewPassword are required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (newPassword !== confirmNewPassword) {
+    throw new AppError("newPassword and confirmNewPassword do not match.", httpStatus.BAD_REQUEST);
+  }
+
+  const admin = await User.findById(req.user._id).select("+password +refreshTokenHash +refreshTokenExpiresAt");
+  if (!admin) {
+    throw new AppError("Admin not found.", httpStatus.NOT_FOUND);
+  }
+
+  const isValid = await admin.comparePassword(currentPassword);
+  if (!isValid) {
+    throw new AppError("Current password is incorrect.", httpStatus.UNAUTHORIZED);
+  }
+
+  admin.password = newPassword;
+  admin.clearRefreshToken();
+  await admin.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Password updated successfully. Please log in again.",
+  });
+});
+
+export const getAdminSubscriptionPlans = catchAsync(async (req, res) => {
+  await ensureDefaultPlansIfEmpty();
+
+  const includeInactive = parseBoolean(req.query.includeInactive, "includeInactive");
+  const filter = includeInactive ? {} : { isActive: true };
+
+  const plans = await SubscriptionPlan.find(filter).sort({ sortOrder: 1, createdAt: 1 });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: plans.map(toPlanResponse),
+  });
+});
+
+export const createAdminSubscriptionPlan = catchAsync(async (req, res) => {
+  const planKey = normalizePlanKey(req.body.key);
+  const existingPlan = await SubscriptionPlan.findOne({ key: planKey, isActive: true });
+  if (existingPlan) {
+    throw new AppError("Plan already exists.", httpStatus.CONFLICT);
+  }
+
+  const defaultPlan = getDefaultPlanByKey(planKey);
+  const parsedPrice = parseNumber(req.body.price, "price", 0, false);
+  const parsedDurationMonths = parseNumber(req.body.durationMonths, "durationMonths", 0, false);
+  const parsedTrialDays = parseNumber(req.body.trialDays, "trialDays", 0, false);
+
+  const payload = {
+    key: planKey,
+    name: asString(req.body.name) || defaultPlan?.name || planKey,
+    price: parsedPrice ?? defaultPlan?.price ?? 0,
+    currency: asString(req.body.currency || "USD").toUpperCase(),
+    durationLabel: asString(req.body.durationLabel || req.body.planDuration),
+    durationMonths: parsedDurationMonths ?? defaultPlan?.durationMonths ?? 0,
+    trialDays: parsedTrialDays ?? defaultPlan?.trialDays ?? 0,
+    features: normalizeFeatures(req.body.features || req.body.planItems),
+    isPopular: parseBoolean(req.body.isPopular, "isPopular") || false,
+    sortOrder: parseNumber(req.body.sortOrder, "sortOrder", 0, false) || PLAN_KEYS.indexOf(planKey) + 1,
+    isActive: true,
+    createdBy: req.user._id,
+    updatedBy: req.user._id,
+  };
+
+  if (!payload.durationLabel) {
+    payload.durationLabel = payload.trialDays ? `${payload.trialDays} days` : `${payload.durationMonths || 1} months`;
+  }
+
+  if (payload.features.length === 0 && defaultPlan?.features?.length) {
+    payload.features = defaultPlan.features;
+  }
+
+  if (planKey === "free_trial") {
+    payload.price = 0;
+    payload.durationMonths = 0;
+    payload.trialDays = Math.max(payload.trialDays || 0, 1);
+  }
+
+  const plan = await SubscriptionPlan.create(payload);
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Subscription plan created successfully.",
+    data: toPlanResponse(plan),
+  });
+});
+
+export const updateAdminSubscriptionPlan = catchAsync(async (req, res) => {
+  const planKey = normalizePlanKey(req.params.planKey);
+  const plan = await ensurePlanDoc(planKey);
+
+  if (Object.hasOwn(req.body, "name")) {
+    const name = asString(req.body.name);
+    if (!name) {
+      throw new AppError("name cannot be empty.", httpStatus.BAD_REQUEST);
+    }
+    plan.name = name;
+  }
+
+  if (Object.hasOwn(req.body, "price")) {
+    plan.price = parseNumber(req.body.price, "price", 0, true);
+  }
+
+  if (Object.hasOwn(req.body, "currency")) {
+    const currency = asString(req.body.currency).toUpperCase();
+    if (!currency) {
+      throw new AppError("currency cannot be empty.", httpStatus.BAD_REQUEST);
+    }
+    plan.currency = currency;
+  }
+
+  if (Object.hasOwn(req.body, "durationLabel") || Object.hasOwn(req.body, "planDuration")) {
+    const durationLabel = asString(req.body.durationLabel || req.body.planDuration);
+    if (!durationLabel) {
+      throw new AppError("durationLabel cannot be empty.", httpStatus.BAD_REQUEST);
+    }
+    plan.durationLabel = durationLabel;
+  }
+
+  if (Object.hasOwn(req.body, "durationMonths")) {
+    plan.durationMonths = parseNumber(req.body.durationMonths, "durationMonths", 0, true);
+  }
+
+  if (Object.hasOwn(req.body, "trialDays")) {
+    plan.trialDays = parseNumber(req.body.trialDays, "trialDays", 0, true);
+  }
+
+  if (Object.hasOwn(req.body, "features") || Object.hasOwn(req.body, "planItems")) {
+    const features = normalizeFeatures(req.body.features || req.body.planItems);
+    if (features.length === 0) {
+      throw new AppError("At least one feature is required.", httpStatus.BAD_REQUEST);
+    }
+    plan.features = features;
+  }
+
+  if (Object.hasOwn(req.body, "isPopular")) {
+    plan.isPopular = parseBoolean(req.body.isPopular, "isPopular");
+  }
+
+  if (Object.hasOwn(req.body, "sortOrder")) {
+    plan.sortOrder = parseNumber(req.body.sortOrder, "sortOrder", 0, true);
+  }
+
+  if (Object.hasOwn(req.body, "isActive")) {
+    plan.isActive = parseBoolean(req.body.isActive, "isActive");
+    if (!plan.isActive) {
+      plan.deletedAt = new Date();
+    } else {
+      plan.deletedAt = null;
+    }
+  }
+
+  if (plan.key === "free_trial") {
+    plan.price = 0;
+    plan.durationMonths = 0;
+    plan.trialDays = Math.max(plan.trialDays || 0, 1);
+  }
+
+  plan.updatedBy = req.user._id;
+  await plan.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Subscription plan updated successfully.",
+    data: toPlanResponse(plan),
+  });
+});
+
+export const deleteAdminSubscriptionPlan = catchAsync(async (req, res) => {
+  const planKey = normalizePlanKey(req.params.planKey);
+  const plan = await SubscriptionPlan.findOne({ key: planKey, isActive: true });
+  if (!plan) {
+    throw new AppError("Plan not found.", httpStatus.NOT_FOUND);
+  }
+
+  plan.isActive = false;
+  plan.deletedAt = new Date();
+  plan.updatedBy = req.user._id;
+  await plan.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Subscription plan deleted successfully.",
+  });
+});
