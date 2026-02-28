@@ -13,7 +13,10 @@ import authRoutes from "./routes/auth.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import programRoutes from "./routes/program.routes.js";
+import exerciseRoutes from "./routes/exercise.routes.js";
 import recipeRoutes from "./routes/recipe.routes.js";
+import chatRoutes from "./routes/chat.routes.js";
+import nutritionRoutes from "./routes/nutrition.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 
 const app = express();
@@ -63,7 +66,10 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/programs", programRoutes);
+app.use("/api/v1/exercises", exerciseRoutes);
 app.use("/api/v1/recipes", recipeRoutes);
+app.use("/api/v1/chat", chatRoutes);
+app.use("/api/v1/nutrition", nutritionRoutes);
 app.use("/api/v1/admin", adminRoutes);
 
 /**

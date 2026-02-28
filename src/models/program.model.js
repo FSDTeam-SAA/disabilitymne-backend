@@ -144,6 +144,15 @@ const programSchema = new mongoose.Schema(
       type: [mediaAssetSchema],
       default: [],
     },
+    exerciseRefs: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Exercise",
+        },
+      ],
+      default: [],
+    },
     exercises: {
       type: [exerciseSchema],
       default: [],
@@ -182,7 +191,12 @@ const programSchema = new mongoose.Schema(
 );
 
 programSchema.pre("validate", function preValidate(next) {
-  this.totalExercises = Array.isArray(this.exercises) ? this.exercises.length : 0;
+  this.exerciseRefs = Array.isArray(this.exerciseRefs) ? this.exerciseRefs.filter(Boolean) : [];
+  this.totalExercises = this.exerciseRefs.length;
+
+  if (this.totalExercises === 0) {
+    this.totalExercises = Array.isArray(this.exercises) ? this.exercises.length : 0;
+  }
 
   if (Array.isArray(this.exercises)) {
     this.exercises.forEach((exercise) => {
@@ -228,5 +242,6 @@ programSchema.pre("validate", function preValidate(next) {
 
 programSchema.index({ status: 1, isActive: 1, userType: 1, createdAt: -1 });
 programSchema.index({ assignedUser: 1, status: 1, isActive: 1, createdAt: -1 });
+programSchema.index({ exerciseRefs: 1, status: 1, isActive: 1 });
 
 export const Program = mongoose.model("Program", programSchema);

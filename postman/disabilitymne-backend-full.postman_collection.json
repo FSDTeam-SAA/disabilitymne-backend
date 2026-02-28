@@ -1381,7 +1381,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"programName\": \"Strength Training\",\n  \"programDuration\": \"30 Minute\",\n  \"durationMinutes\": 30,\n  \"programLevel\": \"beginner\",\n  \"userType\": \"normal_user\",\n  \"programDescription\": \"Adaptive strength training plan\",\n  \"mobilityType\": \"wheelchair_user\",\n  \"weekCount\": 12,\n  \"programImages\": [\n    {\n      \"url\": \"https://example.com/program-image.jpg\"\n    }\n  ],\n  \"programThumbnails\": [\n    {\n      \"url\": \"https://example.com/program-thumb.jpg\"\n    }\n  ],\n  \"exercises\": [\n    {\n      \"name\": \"Chest Press Machines\",\n      \"description\": \"Press movement with controlled tempo.\",\n      \"keyBenefits\": [\n        \"Works multiple muscle groups\",\n        \"Builds chest strength\"\n      ],\n      \"demoVideos\": [\n        {\n          \"url\": \"https://example.com/exercise-demo-1.mp4\"\n        },\n        {\n          \"url\": \"https://example.com/exercise-demo-2.mp4\"\n        }\n      ],\n      \"exerciseImages\": [\n        {\n          \"url\": \"https://example.com/exercise-image.jpg\"\n        }\n      ],\n      \"targetMuscleImages\": [\n        {\n          \"url\": \"https://example.com/target-front.png\"\n        },\n        {\n          \"url\": \"https://example.com/target-back.png\"\n        }\n      ],\n      \"defaultSets\": [\n        {\n          \"setNumber\": 1,\n          \"reps\": 12,\n          \"weightKg\": 6\n        },\n        {\n          \"setNumber\": 2,\n          \"reps\": 10,\n          \"weightKg\": 6\n        }\n      ]\n    }\n  ]\n}"
+              "raw": "{\n  \"programName\": \"Strength Training\",\n  \"programDuration\": \"30 Minute\",\n  \"durationMinutes\": 30,\n  \"programLevel\": \"beginner\",\n  \"userType\": \"normal_user\",\n  \"programDescription\": \"Adaptive strength training plan linked from Exercise Library\",\n  \"mobilityType\": \"wheelchair_user\",\n  \"weekCount\": 12,\n  \"programImages\": [\n    {\n      \"url\": \"https://example.com/program-image.jpg\"\n    }\n  ],\n  \"programThumbnails\": [\n    {\n      \"url\": \"https://example.com/program-thumb.jpg\"\n    }\n  ],\n  \"exerciseIds\": [\n    \"{{exerciseId}}\"\n  ]\n}"
             }
           },
           "event": [
@@ -1464,7 +1464,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"programName\": \"Strength Training - Updated\",\n  \"exercises\": [\n    {\n      \"name\": \"Chest Press Machines\",\n      \"description\": \"Updated description\",\n      \"keyBenefits\": [\n        \"Upper body strength\",\n        \"Chest activation\"\n      ],\n      \"demoVideos\": [\n        {\n          \"url\": \"https://example.com/new-demo-1.mp4\"\n        },\n        {\n          \"url\": \"https://example.com/new-demo-2.mp4\"\n        }\n      ],\n      \"targetMuscleImages\": [\n        {\n          \"url\": \"https://example.com/new-target-front.png\"\n        },\n        {\n          \"url\": \"https://example.com/new-target-back.png\"\n        }\n      ]\n    }\n  ]\n}"
+              "raw": "{\n  \"programName\": \"Strength Training - Updated\",\n  \"exerciseIds\": [\n    \"{{exerciseId}}\"\n  ]\n}"
             }
           }
         },
@@ -2267,12 +2267,931 @@
           }
         }
       ]
+    },
+    {
+      "name": "Exercises (Admin)",
+      "item": [
+        {
+          "name": "List Premium Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin/premium-users?search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin",
+                "premium-users"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin List Exercises",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin Create Exercise",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exerciseName\": \"Chest Press Machines\",\n  \"userType\": \"all_user\",\n  \"description\": \"Starting with your hands around shoulder height and controlled pressing motion.\",\n  \"keyBenefits\": [\n    \"Works multiple muscle groups\",\n    \"Builds upper body strength\"\n  ],\n  \"muscleGroups\": [\n    \"Chest\",\n    \"Shoulders\",\n    \"Arms\"\n  ],\n  \"exerciseImages\": [\n    {\n      \"url\": \"https://example.com/exercise-image.jpg\"\n    }\n  ],\n  \"targetMuscleImages\": [\n    {\n      \"url\": \"https://example.com/target-front.png\"\n    },\n    {\n      \"url\": \"https://example.com/target-back.png\"\n    }\n  ],\n  \"demoVideos\": [\n    {\n      \"url\": \"https://example.com/exercise-demo.mp4\"\n    }\n  ],\n  \"isVisibleInLibrary\": true,\n  \"status\": \"published\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.id || data?.data?._id;",
+                  "if (value) pm.collectionVariables.set('exerciseId', value);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin Exercise Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin",
+                "{{exerciseId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Admin Update Exercise",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin",
+                "{{exerciseId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exerciseName\": \"Chest Press Machines - Updated\",\n  \"keyBenefits\": [\n    \"Improves pushing strength\",\n    \"Supports chest development\"\n  ],\n  \"isVisibleInLibrary\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "Admin Toggle Exercise Visibility",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}/visibility",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin",
+                "{{exerciseId}}",
+                "visibility"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isVisibleInLibrary\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Admin Delete Exercise",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "admin",
+                "{{exerciseId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Exercises (User)",
+      "item": [
+        {
+          "name": "Public Exercise Library",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/library?search=&page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "library"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": ""
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "My Private Exercises",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/my?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "my"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "All Accessible Exercises",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/all?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "all"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Exercise Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/exercises/{{exerciseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "exercises",
+                "{{exerciseId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "List Threads",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/threads?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "threads"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Premium Users (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/admin/premium-users?search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "admin",
+                "premium-users"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": ""
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Admin Contacts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/contacts/admins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "contacts",
+                "admins"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create/Get Thread (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/threads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "threads"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"premiumUserId\": \"{{premiumUserId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.id || data?.data?._id;",
+                  "if (value) pm.collectionVariables.set('threadId', value);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create/Get Thread (Premium)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/threads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "threads"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"adminId\": \"{{adminId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.id || data?.data?._id;",
+                  "if (value) pm.collectionVariables.set('threadId', value);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Thread Messages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/threads/{{threadId}}/messages?page=1&limit=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "threads",
+                "{{threadId}}",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "30"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/threads/{{threadId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "threads",
+                "{{threadId}}",
+                "messages"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Hello coach, please review my workout.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Mark Thread Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/threads/{{threadId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "threads",
+                "{{threadId}}",
+                "read"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Nutrition (Calculator & Foods)",
+      "item": [
+        {
+          "name": "Calculate Macro Targets",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nutrition/calculator/macro-targets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "nutrition",
+                "calculator",
+                "macro-targets"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"goal\": \"maintenance\",\n  \"weightKg\": 80,\n  \"proteinPerKg\": 1.8,\n  \"carbsPerKg\": 2,\n  \"fatPerKg\": 0.8\n}"
+            }
+          }
+        },
+        {
+          "name": "Food Search (USDA)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nutrition/foods/search?query=apple&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "nutrition",
+                "foods",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "apple"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Food Suggestions (Typeahead)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nutrition/foods/suggestions?q=app&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "nutrition",
+                "foods",
+                "suggestions"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "app"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Food Details by FDC ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/nutrition/foods/{{fdcId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "nutrition",
+                "foods",
+                "{{fdcId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:5000"
+      "value": "http://localhost:8000"
     },
     {
       "key": "accessToken",
@@ -2301,6 +3220,26 @@
     {
       "key": "planKey",
       "value": "monthly_plan"
+    },
+    {
+      "key": "exerciseId",
+      "value": ""
+    },
+    {
+      "key": "threadId",
+      "value": ""
+    },
+    {
+      "key": "fdcId",
+      "value": "454004"
+    },
+    {
+      "key": "premiumUserId",
+      "value": ""
+    },
+    {
+      "key": "adminId",
+      "value": ""
     }
   ]
 }
