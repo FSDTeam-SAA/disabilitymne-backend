@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect } from "../middlewares/auth.js";
+import { uploadImageFields } from "../middlewares/upload.js";
 import { getMe, selectPlan, updateMe, updateOnboarding } from "../controllers/user.controller.js";
 import {
   addDailyTrackerNote,
@@ -23,12 +24,17 @@ import {
 } from "../controllers/userExperience.controller.js";
 
 const router = Router();
+const uploadProfileImage = uploadImageFields([
+  { name: "profileImage", maxCount: 1 },
+  { name: "avatar", maxCount: 1 },
+  { name: "image", maxCount: 1 },
+]);
 
 router.use(protect);
 
 router.get("/me", getMe);
-router.patch("/me", updateMe);
-router.patch("/me/onboarding", updateOnboarding);
+router.patch("/me", uploadProfileImage, updateMe);
+router.patch("/me/onboarding", uploadProfileImage, updateOnboarding);
 router.post("/me/select-plan", selectPlan);
 router.get("/me/home", getHomeOverview);
 router.get("/me/profile", getMyPublicProfile);
