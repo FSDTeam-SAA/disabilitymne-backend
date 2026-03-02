@@ -7,6 +7,12 @@ export const serializeUser = (user) => ({
   phone: user.phone,
   bio: user.bio || "",
   preferredLanguage: user.preferredLanguage || "en",
+  accessibilityPreferences: {
+    largerText: Boolean(user.accessibilityPreferences?.largerText),
+    highContrast: Boolean(user.accessibilityPreferences?.highContrast),
+    reducedMotion: Boolean(user.accessibilityPreferences?.reducedMotion),
+    screenReaderOptimized: Boolean(user.accessibilityPreferences?.screenReaderOptimized),
+  },
   profileImage: user.profileImage || null,
   gender: user.gender || null,
   age: user.age ?? null,

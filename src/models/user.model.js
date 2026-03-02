@@ -18,6 +18,16 @@ const MOBILITY_TYPES = [
 ];
 const FITNESS_EXPERIENCE_LEVELS = ["beginner", "intermediate", "advanced"];
 
+const accessibilityPreferencesSchema = new mongoose.Schema(
+  {
+    largerText: { type: Boolean, default: false },
+    highContrast: { type: Boolean, default: false },
+    reducedMotion: { type: Boolean, default: false },
+    screenReaderOptimized: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
 const weightMeasurementSchema = new mongoose.Schema(
   {
     value: { type: Number, min: 0 },
@@ -87,6 +97,15 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ["en", "sr"],
       default: "en",
+    },
+    accessibilityPreferences: {
+      type: accessibilityPreferencesSchema,
+      default: () => ({
+        largerText: false,
+        highContrast: false,
+        reducedMotion: false,
+        screenReaderOptimized: false,
+      }),
     },
     profileImage: {
       type: mediaAssetSchema,

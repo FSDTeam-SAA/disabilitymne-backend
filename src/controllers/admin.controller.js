@@ -6,10 +6,12 @@ import { serializeUser } from "../utils/serializeUser.js";
 import { User } from "../models/user.model.js";
 import { Payment } from "../models/payment.model.js";
 import { SubscriptionPlan } from "../models/subscriptionPlan.model.js";
+import { SupportTicket } from "../models/supportTicket.model.js";
 import { PLAN_KEYS, SUBSCRIPTION_PLANS } from "../constants/subscriptionPlans.js";
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
+const SUPPORT_TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
 
 const PLAN_LABELS = {
   free_trial: "Free Trial user",
@@ -194,6 +196,35 @@ const toPlanResponse = (plan) => ({
   updatedAt: plan.updatedAt,
 });
 
+const normalizeSupportTicketStatus = (value) => {
+  const status = asString(value).toLowerCase();
+  if (!SUPPORT_TICKET_STATUSES.has(status)) {
+    throw new AppError("status must be one of: open, in_progress, resolved, closed.", httpStatus.BAD_REQUEST);
+  }
+
+  return status;
+};
+
+const toAdminSupportTicketResponse = (ticket) => ({
+  id: ticket._id,
+  user: ticket.user && typeof ticket.user === "object"
+    ? {
+      id: ticket.user._id,
+      firstName: ticket.user.firstName || "",
+      lastName: ticket.user.lastName || "",
+      email: ticket.user.email || ticket.email,
+    }
+    : null,
+  email: ticket.email,
+  subject: ticket.subject,
+  description: ticket.description,
+  status: ticket.status,
+  adminResponse: ticket.adminResponse || "",
+  resolvedAt: ticket.resolvedAt || null,
+  createdAt: ticket.createdAt,
+  updatedAt: ticket.updatedAt,
+});
+
 const getDefaultPlanByKey = (planKey) => SUBSCRIPTION_PLANS.find((plan) => plan.key === planKey);
 
 const ensurePlanDoc = async (planKey) => {
@@ -348,6 +379,98 @@ export const getAdminUsers = catchAsync(async (req, res) => {
       total,
       totalPages: Math.max(1, Math.ceil(total / limit)),
     },
+  });
+});
+
+export const getAdminSupportTickets = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const filter = {};
+
+  if (req.query.status) {
+    filter.status = normalizeSupportTicketStatus(req.query.status);
+  }
+
+  if (req.query.search) {
+    const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
+    filter.$or = [
+      { email: pattern },
+      { subject: pattern },
+      { description: pattern },
+      { adminResponse: pattern },
+    ];
+  }
+
+  const [tickets, total] = await Promise.all([
+    SupportTicket.find(filter)
+      .sort({ createdAt: -1, updatedAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("user", "firstName lastName email"),
+    SupportTicket.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: tickets.map(toAdminSupportTicketResponse),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});
+
+export const getAdminSupportTicketById = catchAsync(async (req, res) => {
+  const { ticketId } = req.params;
+  if (!mongoose.isValidObjectId(ticketId)) {
+    throw new AppError("Invalid support ticket id.", httpStatus.BAD_REQUEST);
+  }
+
+  const ticket = await SupportTicket.findById(ticketId).populate("user", "firstName lastName email");
+  if (!ticket) {
+    throw new AppError("Support ticket not found.", httpStatus.NOT_FOUND);
+  }
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: toAdminSupportTicketResponse(ticket),
+  });
+});
+
+export const updateAdminSupportTicket = catchAsync(async (req, res) => {
+  const { ticketId } = req.params;
+  if (!mongoose.isValidObjectId(ticketId)) {
+    throw new AppError("Invalid support ticket id.", httpStatus.BAD_REQUEST);
+  }
+
+  const ticket = await SupportTicket.findById(ticketId).populate("user", "firstName lastName email");
+  if (!ticket) {
+    throw new AppError("Support ticket not found.", httpStatus.NOT_FOUND);
+  }
+
+  if (Object.hasOwn(req.body, "status")) {
+    ticket.status = normalizeSupportTicketStatus(req.body.status);
+  }
+
+  if (Object.hasOwn(req.body, "adminResponse")) {
+    ticket.adminResponse = asString(req.body.adminResponse);
+  }
+
+  if (ticket.status === "resolved" || ticket.status === "closed") {
+    ticket.resolvedAt = ticket.resolvedAt || new Date();
+  } else {
+    ticket.resolvedAt = null;
+  }
+
+  await ticket.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Support ticket updated successfully.",
+    data: toAdminSupportTicketResponse(ticket),
   });
 });
 

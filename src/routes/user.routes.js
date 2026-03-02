@@ -7,6 +7,7 @@ import {
   createSupportTicket,
   createWorkoutLog,
   getDailyTracker,
+  getAccessibilityPreferences,
   getHomeOverview,
   getLanguagePreference,
   getMyPublicProfile,
@@ -17,6 +18,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   updateDailyTracker,
+  updateAccessibilityPreferences,
   updateLanguagePreference,
 } from "../controllers/userExperience.controller.js";
 
@@ -41,6 +43,8 @@ router.patch("/me/notifications/read-all", markAllNotificationsRead);
 router.patch("/me/notifications/:notificationId/read", markNotificationRead);
 router.get("/me/language", getLanguagePreference);
 router.patch("/me/language", updateLanguagePreference);
+router.get("/me/accessibility", getAccessibilityPreferences);
+router.patch("/me/accessibility", updateAccessibilityPreferences);
 router.post("/me/support/tickets", createSupportTicket);
 router.get("/me/support/tickets", getMySupportTickets);
 router.post("/me/change-password", changeMyPassword);

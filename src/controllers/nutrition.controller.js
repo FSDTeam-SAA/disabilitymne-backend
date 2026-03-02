@@ -1,6 +1,7 @@
 import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
+import { NutritionEntry } from "../models/nutritionEntry.model.js";
 
 const USDA_API_BASE = "https://api.nal.usda.gov/fdc/v1";
 const USDA_API_KEY =
@@ -27,6 +28,17 @@ const NUTRIENT_KEYS = {
   fiberG: ["1079", "291", "Fiber, total dietary"],
   sugarG: ["2000", "269", "Total Sugars"],
 };
+
+const DIARY_MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "other"];
+const DIARY_MEAL_TYPE_SET = new Set(DIARY_MEAL_TYPES);
+const DIARY_MEAL_LABELS = {
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  dinner: "Dinner",
+  snack: "Snack",
+  other: "Other",
+};
+const DIARY_SOURCE_SET = new Set(["manual", "usda"]);
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -168,6 +180,281 @@ const buildUsdaSearchUrl = ({ query, pageNumber = 1, pageSize = 20 }) => {
   });
 
   return `${USDA_API_BASE}/foods/search?${params.toString()}`;
+};
+
+const normalizeDiaryDate = (value, fieldName = "date") => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    throw new AppError(`${fieldName} must be a valid date.`, httpStatus.BAD_REQUEST);
+  }
+
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getNumericValue = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+};
+
+const getTrimmedString = (...values) => {
+  for (const value of values) {
+    const normalized = asString(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+};
+
+const getNutrientValueFromSource = (source, keys) => getNumericValue(...keys.map((key) => source?.[key]));
+
+const resolveImageUrl = (body, currentEntry = null) =>
+  getTrimmedString(body.imageUrl, body.image?.url, body.image?.secure_url, currentEntry?.imageUrl);
+
+const normalizeMealType = (value, required = true) => {
+  const normalized = asString(value).toLowerCase();
+
+  if (!normalized) {
+    if (!required) {
+      return "";
+    }
+    throw new AppError("mealType is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!DIARY_MEAL_TYPE_SET.has(normalized)) {
+    throw new AppError("mealType must be one of: breakfast, lunch, dinner, snack, other.", httpStatus.BAD_REQUEST);
+  }
+
+  return normalized;
+};
+
+const buildNutritionTotals = (entries = []) =>
+  entries.reduce(
+    (totals, entry) => ({
+      caloriesKcal: round(totals.caloriesKcal + Number(entry.caloriesKcal || 0), 1),
+      proteinG: round(totals.proteinG + Number(entry.proteinG || 0), 1),
+      carbsG: round(totals.carbsG + Number(entry.carbsG || 0), 1),
+      fatG: round(totals.fatG + Number(entry.fatG || 0), 1),
+      fiberG: round(totals.fiberG + Number(entry.fiberG || 0), 1),
+      sugarG: round(totals.sugarG + Number(entry.sugarG || 0), 1),
+      totalGrams: round(totals.totalGrams + Number(entry.totalGrams || 0), 1),
+    }),
+    {
+      caloriesKcal: 0,
+      proteinG: 0,
+      carbsG: 0,
+      fatG: 0,
+      fiberG: 0,
+      sugarG: 0,
+      totalGrams: 0,
+    }
+  );
+
+const buildMacroPercentages = (totals) => {
+  const proteinCalories = Number(totals.proteinG || 0) * 4;
+  const carbsCalories = Number(totals.carbsG || 0) * 4;
+  const fatCalories = Number(totals.fatG || 0) * 9;
+  const totalMacroCalories = proteinCalories + carbsCalories + fatCalories;
+
+  if (totalMacroCalories <= 0) {
+    return {
+      proteinPercent: 0,
+      carbsPercent: 0,
+      fatPercent: 0,
+    };
+  }
+
+  return {
+    proteinPercent: round((proteinCalories / totalMacroCalories) * 100, 1),
+    carbsPercent: round((carbsCalories / totalMacroCalories) * 100, 1),
+    fatPercent: round((fatCalories / totalMacroCalories) * 100, 1),
+  };
+};
+
+const toNutritionEntryResponse = (entry) => ({
+  id: entry._id,
+  entryDate: entry.entryDate,
+  mealType: entry.mealType,
+  mealLabel: DIARY_MEAL_LABELS[entry.mealType] || entry.mealType,
+  foodName: entry.foodName,
+  brandName: entry.brandName || "",
+  source: entry.source,
+  fdcId: entry.fdcId || null,
+  quantity: entry.quantity,
+  servingLabel: entry.servingLabel,
+  totalGrams: round(Number(entry.totalGrams || 0), 1),
+  caloriesKcal: round(Number(entry.caloriesKcal || 0), 1),
+  proteinG: round(Number(entry.proteinG || 0), 1),
+  carbsG: round(Number(entry.carbsG || 0), 1),
+  fatG: round(Number(entry.fatG || 0), 1),
+  fiberG: round(Number(entry.fiberG || 0), 1),
+  sugarG: round(Number(entry.sugarG || 0), 1),
+  imageUrl: entry.imageUrl || "",
+  notes: entry.notes || "",
+  isFavorite: Boolean(entry.isFavorite),
+  createdAt: entry.createdAt,
+  updatedAt: entry.updatedAt,
+});
+
+const resolveEntryNutrients = (body, totalGrams, currentEntry = null) => {
+  const nutrientSource = body.nutrients && typeof body.nutrients === "object" ? body.nutrients : {};
+  const per100gSourceCandidates = [
+    body.nutrientsPer100g,
+    body.per100gNutrients,
+    body.per100g,
+    nutrientSource.per100g,
+  ];
+  const per100gSource = per100gSourceCandidates.find((value) => value && typeof value === "object") || null;
+
+  if (per100gSource && totalGrams > 0) {
+    const factor = totalGrams / 100;
+    return {
+      caloriesKcal: round((getNutrientValueFromSource(per100gSource, ["caloriesKcal", "calories"]) || 0) * factor, 1),
+      proteinG: round((getNutrientValueFromSource(per100gSource, ["proteinG", "protein"]) || 0) * factor, 1),
+      carbsG: round((getNutrientValueFromSource(per100gSource, ["carbsG", "carbs"]) || 0) * factor, 1),
+      fatG: round((getNutrientValueFromSource(per100gSource, ["fatG", "fat"]) || 0) * factor, 1),
+      fiberG: round((getNutrientValueFromSource(per100gSource, ["fiberG", "fiber"]) || 0) * factor, 1),
+      sugarG: round((getNutrientValueFromSource(per100gSource, ["sugarG", "sugar"]) || 0) * factor, 1),
+    };
+  }
+
+  return {
+    caloriesKcal: round(
+      getNumericValue(body.caloriesKcal, body.calories, nutrientSource.caloriesKcal, nutrientSource.calories, currentEntry?.caloriesKcal, 0) || 0,
+      1
+    ),
+    proteinG: round(
+      getNumericValue(body.proteinG, body.protein, nutrientSource.proteinG, nutrientSource.protein, currentEntry?.proteinG, 0) || 0,
+      1
+    ),
+    carbsG: round(
+      getNumericValue(body.carbsG, body.carbs, nutrientSource.carbsG, nutrientSource.carbs, currentEntry?.carbsG, 0) || 0,
+      1
+    ),
+    fatG: round(
+      getNumericValue(body.fatG, body.fat, nutrientSource.fatG, nutrientSource.fat, currentEntry?.fatG, 0) || 0,
+      1
+    ),
+    fiberG: round(
+      getNumericValue(body.fiberG, body.fiber, nutrientSource.fiberG, nutrientSource.fiber, currentEntry?.fiberG, 0) || 0,
+      1
+    ),
+    sugarG: round(
+      getNumericValue(body.sugarG, body.sugar, nutrientSource.sugarG, nutrientSource.sugar, currentEntry?.sugarG, 0) || 0,
+      1
+    ),
+  };
+};
+
+const buildNutritionEntryPayload = (body, currentEntry = null) => {
+  const entryDate = normalizeDiaryDate(body.entryDate || body.date || currentEntry?.entryDate, "entryDate");
+  const foodName = getTrimmedString(
+    body.foodName,
+    body.description,
+    body.name,
+    body.food?.description,
+    currentEntry?.foodName
+  );
+  if (!foodName) {
+    throw new AppError("foodName is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const quantity =
+    parseNumber(body.quantity ?? currentEntry?.quantity, "quantity", 0.01, currentEntry ? false : true) ??
+    currentEntry?.quantity;
+  const servingLabel = getTrimmedString(body.servingLabel, body.unit, body.measurement, currentEntry?.servingLabel, "gram");
+
+  let totalGrams = getNumericValue(body.totalGrams, body.grams, body.gramWeight);
+  const servingGrams = getNumericValue(body.servingGrams, body.portionGrams);
+  if (totalGrams === undefined && servingGrams !== undefined && quantity !== undefined) {
+    totalGrams = quantity * servingGrams;
+  }
+
+  if (totalGrams === undefined && ["gram", "grams", "g"].includes(servingLabel.toLowerCase()) && quantity !== undefined) {
+    totalGrams = quantity;
+  }
+
+  totalGrams = round(Math.max(0, Number(totalGrams ?? currentEntry?.totalGrams ?? 0)), 1);
+
+  const mealType = normalizeMealType(body.mealType || currentEntry?.mealType || "breakfast");
+  const brandName = getTrimmedString(body.brandName, body.brandOwner, currentEntry?.brandName);
+  const fdcId = getNumericValue(body.fdcId, body.food?.fdcId, currentEntry?.fdcId) || null;
+  const source = getTrimmedString(body.source, currentEntry?.source, fdcId ? "usda" : "manual").toLowerCase();
+  if (!DIARY_SOURCE_SET.has(source)) {
+    throw new AppError("source must be one of: manual, usda.", httpStatus.BAD_REQUEST);
+  }
+
+  const notes = getTrimmedString(body.notes, currentEntry?.notes);
+  if (notes.length > 500) {
+    throw new AppError("notes should not exceed 500 characters.", httpStatus.BAD_REQUEST);
+  }
+
+  const nutrients = resolveEntryNutrients(body, totalGrams, currentEntry);
+
+  return {
+    entryDate,
+    mealType,
+    foodName,
+    brandName,
+    source,
+    fdcId,
+    quantity,
+    servingLabel,
+    totalGrams,
+    ...nutrients,
+    imageUrl: resolveImageUrl(body, currentEntry),
+    notes,
+    isFavorite:
+      body.isFavorite === undefined ? Boolean(currentEntry?.isFavorite) : Boolean(body.isFavorite),
+  };
+};
+
+const getOwnedNutritionEntry = async (entryId, userId) => {
+  if (!entryId || !/^[0-9a-fA-F]{24}$/.test(String(entryId))) {
+    throw new AppError("entryId must be a valid id.", httpStatus.BAD_REQUEST);
+  }
+
+  const entry = await NutritionEntry.findOne({ _id: entryId, user: userId });
+  if (!entry) {
+    throw new AppError("Nutrition entry not found.", httpStatus.NOT_FOUND);
+  }
+
+  return entry;
+};
+
+const buildNutritionDiaryResponse = (date, entries) => {
+  const totals = buildNutritionTotals(entries);
+  const meals = DIARY_MEAL_TYPES.map((mealType) => {
+    const mealEntries = entries.filter((entry) => entry.mealType === mealType);
+    return {
+      mealType,
+      mealLabel: DIARY_MEAL_LABELS[mealType],
+      totalEntries: mealEntries.length,
+      totals: buildNutritionTotals(mealEntries),
+      entries: mealEntries.map(toNutritionEntryResponse),
+    };
+  });
+
+  return {
+    date,
+    totals,
+    macroPercentages: buildMacroPercentages(totals),
+    totalEntries: entries.length,
+    meals,
+    entries: entries.map(toNutritionEntryResponse),
+  };
 };
 
 export const calculateMacroTargets = catchAsync(async (req, res) => {
@@ -325,5 +612,81 @@ export const getFoodByFdcId = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     data: mapFoodSummary(result),
+  });
+});
+
+export const getNutritionDiary = catchAsync(async (req, res) => {
+  const entryDate = normalizeDiaryDate(req.query.date || req.query.entryDate);
+  const entries = await NutritionEntry.find({
+    user: req.user._id,
+    entryDate,
+  }).sort({ mealType: 1, createdAt: 1 });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: buildNutritionDiaryResponse(entryDate, entries),
+  });
+});
+
+export const getNutritionFavorites = catchAsync(async (req, res) => {
+  const limit = parseNumber(req.query.limit, "limit", 1, false) ?? 20;
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+  const entries = await NutritionEntry.find({
+    user: req.user._id,
+    isFavorite: true,
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(safeLimit);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: entries.map(toNutritionEntryResponse),
+  });
+});
+
+export const getNutritionDiaryEntryById = catchAsync(async (req, res) => {
+  const entry = await getOwnedNutritionEntry(req.params.entryId, req.user._id);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: toNutritionEntryResponse(entry),
+  });
+});
+
+export const createNutritionDiaryEntry = catchAsync(async (req, res) => {
+  const payload = buildNutritionEntryPayload(req.body);
+  const entry = await NutritionEntry.create({
+    user: req.user._id,
+    ...payload,
+  });
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Nutrition entry tracked successfully.",
+    data: toNutritionEntryResponse(entry),
+  });
+});
+
+export const updateNutritionDiaryEntry = catchAsync(async (req, res) => {
+  const entry = await getOwnedNutritionEntry(req.params.entryId, req.user._id);
+  const payload = buildNutritionEntryPayload(req.body, entry);
+
+  Object.assign(entry, payload);
+  await entry.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Nutrition entry updated successfully.",
+    data: toNutritionEntryResponse(entry),
+  });
+});
+
+export const deleteNutritionDiaryEntry = catchAsync(async (req, res) => {
+  const entry = await getOwnedNutritionEntry(req.params.entryId, req.user._id);
+  await entry.deleteOne();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Nutrition entry deleted successfully.",
   });
 });

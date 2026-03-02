@@ -31,6 +31,7 @@ const DEFAULT_NOTIFICATION_ITEMS = [
 
 const RECIPE_TYPES = new Set(["all", "breakfast", "lunch", "dinner", "snack", "meal", "other"]);
 const LANGUAGE_CODES = new Set(["en", "sr"]);
+const ACCESSIBILITY_KEYS = ["largerText", "highContrast", "reducedMotion", "screenReaderOptimized"];
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -220,6 +221,13 @@ const toSupportTicketResponse = (ticket) => ({
   resolvedAt: ticket.resolvedAt || null,
   createdAt: ticket.createdAt,
   updatedAt: ticket.updatedAt,
+});
+
+const getAccessibilityPreferencesResponse = (user) => ({
+  largerText: Boolean(user.accessibilityPreferences?.largerText),
+  highContrast: Boolean(user.accessibilityPreferences?.highContrast),
+  reducedMotion: Boolean(user.accessibilityPreferences?.reducedMotion),
+  screenReaderOptimized: Boolean(user.accessibilityPreferences?.screenReaderOptimized),
 });
 
 const ensureDefaultTracker = async (userId, weekStartDate) => {
@@ -771,6 +779,48 @@ export const updateLanguagePreference = catchAsync(async (req, res) => {
     message: "Language preference updated successfully.",
     data: {
       preferredLanguage: req.user.preferredLanguage,
+    },
+  });
+});
+
+export const getAccessibilityPreferences = catchAsync(async (req, res) => {
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: {
+      accessibilityPreferences: getAccessibilityPreferencesResponse(req.user),
+      options: [
+        { key: "largerText", label: "Larger text" },
+        { key: "highContrast", label: "High contrast" },
+        { key: "reducedMotion", label: "Reduced motion" },
+        { key: "screenReaderOptimized", label: "Screen reader optimized" },
+      ],
+    },
+  });
+});
+
+export const updateAccessibilityPreferences = catchAsync(async (req, res) => {
+  const input =
+    req.body.accessibilityPreferences && typeof req.body.accessibilityPreferences === "object"
+      ? req.body.accessibilityPreferences
+      : req.body;
+
+  const currentPreferences = getAccessibilityPreferencesResponse(req.user);
+  const nextPreferences = { ...currentPreferences };
+
+  for (const key of ACCESSIBILITY_KEYS) {
+    if (Object.hasOwn(input, key)) {
+      nextPreferences[key] = parseBoolean(input[key], key);
+    }
+  }
+
+  req.user.accessibilityPreferences = nextPreferences;
+  await req.user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Accessibility preferences updated successfully.",
+    data: {
+      accessibilityPreferences: getAccessibilityPreferencesResponse(req.user),
     },
   });
 });
