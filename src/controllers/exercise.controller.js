@@ -3,11 +3,14 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { User } from "../models/user.model.js";
 
 const EXERCISE_STATUSES = new Set(["draft", "published", "archived"]);
+const EXERCISE_IMAGE_FIELDS = ["exerciseImages", "exerciseImage", "image"];
+const TARGET_MUSCLE_IMAGE_FIELDS = ["targetMuscleImages", "targetMuscleImage", "muscleImages", "muscleImage"];
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -446,8 +449,14 @@ const buildUserAccessibleFilter = (user) => {
   return filter;
 };
 
+const getExerciseBodyFromRequest = (req) =>
+  mergeUploadedMediaIntoBody(req.body, req.files, [
+    { target: "exerciseImages", fieldNames: EXERCISE_IMAGE_FIELDS },
+    { target: "targetMuscleImages", fieldNames: TARGET_MUSCLE_IMAGE_FIELDS },
+  ]);
+
 export const createExercise = catchAsync(async (req, res) => {
-  const payload = await buildCreatePayload(req.body);
+  const payload = await buildCreatePayload(getExerciseBodyFromRequest(req));
 
   const exercise = await Exercise.create({
     ...payload,
@@ -545,7 +554,7 @@ export const updateAdminExercise = catchAsync(async (req, res) => {
     throw new AppError("Exercise not found.", httpStatus.NOT_FOUND);
   }
 
-  const updates = await buildUpdatePayload(req.body, exercise);
+  const updates = await buildUpdatePayload(getExerciseBodyFromRequest(req), exercise);
   if (Object.keys(updates).length === 0) {
     throw new AppError("No valid fields were provided for update.", httpStatus.BAD_REQUEST);
   }

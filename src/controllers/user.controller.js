@@ -3,9 +3,11 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { getPlanByKey } from "../services/subscriptionPlan.service.js";
+import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
 const MAX_ONBOARDING_STEP = 8;
 const ALLOWED_LANGUAGE_CODES = new Set(["en", "sr"]);
+const PROFILE_IMAGE_FIELDS = ["profileImage", "avatar", "image"];
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -136,6 +138,9 @@ const applyOnboardingUpdates = (user, payload) => {
   }
 };
 
+const getProfileBodyFromRequest = (req) =>
+  mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+
 export const getMe = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
@@ -144,7 +149,7 @@ export const getMe = catchAsync(async (req, res) => {
 });
 
 export const updateMe = catchAsync(async (req, res) => {
-  applyOnboardingUpdates(req.user, req.body);
+  applyOnboardingUpdates(req.user, getProfileBodyFromRequest(req));
   await req.user.save();
 
   res.status(httpStatus.OK).json({
@@ -155,7 +160,7 @@ export const updateMe = catchAsync(async (req, res) => {
 });
 
 export const updateOnboarding = catchAsync(async (req, res) => {
-  applyOnboardingUpdates(req.user, req.body);
+  applyOnboardingUpdates(req.user, getProfileBodyFromRequest(req));
   await req.user.save();
 
   res.status(httpStatus.OK).json({

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
+import { uploadImageFields } from "../middlewares/upload.js";
 import {
   createAdminSubscriptionPlan,
   deleteAdminSubscriptionPlan,
@@ -18,6 +19,11 @@ import {
 } from "../controllers/admin.controller.js";
 
 const router = Router();
+const uploadAdminProfileImage = uploadImageFields([
+  { name: "profileImage", maxCount: 1 },
+  { name: "avatar", maxCount: 1 },
+  { name: "image", maxCount: 1 },
+]);
 
 router.use(protect, restrictTo("admin"));
 
@@ -31,7 +37,7 @@ router.get("/support/tickets/:ticketId", getAdminSupportTicketById);
 router.patch("/support/tickets/:ticketId", updateAdminSupportTicket);
 
 router.get("/settings/profile", getAdminSettingsProfile);
-router.patch("/settings/profile", updateAdminSettingsProfile);
+router.patch("/settings/profile", uploadAdminProfileImage, updateAdminSettingsProfile);
 router.patch("/settings/password", updateAdminSettingsPassword);
 
 router.get("/subscriptions/plans", getAdminSubscriptionPlans);

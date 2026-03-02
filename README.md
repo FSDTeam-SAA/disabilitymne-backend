@@ -47,6 +47,26 @@ If SMTP settings are missing, the backend will continue working and log that ema
 
 Response returns Cloudinary `secure_url` etc.
 
+## Multipart Image Fields
+
+These endpoints now expect `multipart/form-data` when you want to upload images directly instead of passing image URLs:
+
+- `PATCH /api/v1/users/me` and `PATCH /api/v1/users/me/onboarding`
+  - image field: `profileImage`
+- `PATCH /api/v1/admin/settings/profile`
+  - image field: `profileImage`
+- `POST|PATCH /api/v1/programs/admin`
+  - image fields: `programImages`, `programThumbnails`
+- `POST|PATCH /api/v1/recipes/admin`
+  - image field: `recipeImages`
+- `POST|PATCH /api/v1/exercises/admin`
+  - image fields: `exerciseImages`, `targetMuscleImages`
+
+Notes:
+- Include optional `folder` in form-data if you want a custom Cloudinary folder.
+- Non-image values can stay as regular text fields in the same multipart request.
+- Exercise demo videos remain text/media URL payloads for now; only image uploads were switched to form-data.
+
 ## Auth APIs
 
 - `POST /api/v1/auth/register`

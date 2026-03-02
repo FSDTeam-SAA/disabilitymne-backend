@@ -279,12 +279,7 @@
           "name": "Onboarding Screen - Save Basic Profile",
           "request": {
             "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/users/me",
             "auth": {
               "type": "bearer",
@@ -297,13 +292,44 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Evan\",\n  \"lastName\": \"Johnson\",\n  \"phone\": \"+13075550133\",\n  \"bio\": \"Adaptive training enthusiast\",\n  \"preferredLanguage\": \"en\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "firstName",
+                  "type": "text",
+                  "value": "Evan"
+                },
+                {
+                  "key": "lastName",
+                  "type": "text",
+                  "value": "Johnson"
+                },
+                {
+                  "key": "phone",
+                  "type": "text",
+                  "value": "+13075550133"
+                },
+                {
+                  "key": "bio",
+                  "type": "text",
+                  "value": "Adaptive training enthusiast"
+                },
+                {
+                  "key": "preferredLanguage",
+                  "type": "text",
+                  "value": "en"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "profiles"
+                },
+                {
+                  "key": "profileImage",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           }
         },
@@ -1838,12 +1864,7 @@
           "name": "Program Management - Create Program",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/programs/admin",
             "auth": {
               "type": "bearer",
@@ -1856,13 +1877,69 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"programName\": \"Strength Training\",\n  \"programDuration\": \"30 Minute\",\n  \"durationMinutes\": 30,\n  \"programLevel\": \"beginner\",\n  \"userType\": \"normal_user\",\n  \"programDescription\": \"Adaptive strength training plan linked from Exercise Library\",\n  \"mobilityType\": \"wheelchair_user\",\n  \"weekCount\": 12,\n  \"programImages\": [\n    {\n      \"url\": \"https://example.com/program-image.jpg\"\n    }\n  ],\n  \"programThumbnails\": [\n    {\n      \"url\": \"https://example.com/program-thumb.jpg\"\n    }\n  ],\n  \"exerciseIds\": [\n    \"{{exerciseId}}\"\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "programName",
+                  "type": "text",
+                  "value": "Strength Training"
+                },
+                {
+                  "key": "programDuration",
+                  "type": "text",
+                  "value": "30 Minute"
+                },
+                {
+                  "key": "durationMinutes",
+                  "type": "text",
+                  "value": "30"
+                },
+                {
+                  "key": "programLevel",
+                  "type": "text",
+                  "value": "beginner"
+                },
+                {
+                  "key": "userType",
+                  "type": "text",
+                  "value": "normal_user"
+                },
+                {
+                  "key": "programDescription",
+                  "type": "text",
+                  "value": "Adaptive strength training plan linked from Exercise Library"
+                },
+                {
+                  "key": "mobilityType",
+                  "type": "text",
+                  "value": "wheelchair_user"
+                },
+                {
+                  "key": "weekCount",
+                  "type": "text",
+                  "value": "12"
+                },
+                {
+                  "key": "exerciseIds",
+                  "type": "text",
+                  "value": "[\"{{exerciseId}}\"]"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "programs"
+                },
+                {
+                  "key": "programImages",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "programThumbnails",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           },
           "event": [
@@ -1902,12 +1979,7 @@
           "name": "Program Management - Update Program",
           "request": {
             "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/programs/admin/{{programId}}",
             "auth": {
               "type": "bearer",
@@ -1920,13 +1992,39 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"programName\": \"Strength Training Updated\",\n  \"weekCount\": 10,\n  \"status\": \"published\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "programName",
+                  "type": "text",
+                  "value": "Strength Training Updated"
+                },
+                {
+                  "key": "weekCount",
+                  "type": "text",
+                  "value": "10"
+                },
+                {
+                  "key": "status",
+                  "type": "text",
+                  "value": "published"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "programs"
+                },
+                {
+                  "key": "programImages",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "programThumbnails",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           }
         },
@@ -1993,12 +2091,7 @@
           "name": "Recipe Management - Create Recipe",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/recipes/admin",
             "auth": {
               "type": "bearer",
@@ -2011,13 +2104,74 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"recipeName\": \"High Protein Oat Bowl\",\n  \"recipeDuration\": \"10 Minutes\",\n  \"durationMinutes\": 10,\n  \"recipeType\": \"breakfast\",\n  \"userType\": \"normal_user\",\n  \"howToPrepare\": \"Mix oats and protein powder.\",\n  \"caloriesKcal\": 420,\n  \"proteinG\": 28,\n  \"carbsG\": 52,\n  \"fatG\": 8,\n  \"ingredients\": [\n    \"Oats\",\n    \"Protein powder\",\n    \"Banana\"\n  ],\n  \"recipeImages\": [\n    {\n      \"url\": \"https://example.com/recipe.jpg\"\n    }\n  ]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "recipeName",
+                  "type": "text",
+                  "value": "High Protein Oat Bowl"
+                },
+                {
+                  "key": "recipeDuration",
+                  "type": "text",
+                  "value": "10 Minutes"
+                },
+                {
+                  "key": "durationMinutes",
+                  "type": "text",
+                  "value": "10"
+                },
+                {
+                  "key": "recipeType",
+                  "type": "text",
+                  "value": "breakfast"
+                },
+                {
+                  "key": "userType",
+                  "type": "text",
+                  "value": "normal_user"
+                },
+                {
+                  "key": "howToPrepare",
+                  "type": "text",
+                  "value": "Mix oats and protein powder."
+                },
+                {
+                  "key": "caloriesKcal",
+                  "type": "text",
+                  "value": "420"
+                },
+                {
+                  "key": "proteinG",
+                  "type": "text",
+                  "value": "28"
+                },
+                {
+                  "key": "carbsG",
+                  "type": "text",
+                  "value": "52"
+                },
+                {
+                  "key": "fatG",
+                  "type": "text",
+                  "value": "8"
+                },
+                {
+                  "key": "ingredients",
+                  "type": "text",
+                  "value": "[\"Oats\",\"Protein powder\",\"Banana\"]"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "recipes"
+                },
+                {
+                  "key": "recipeImages",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           },
           "event": [
@@ -2057,12 +2211,7 @@
           "name": "Recipe Management - Update Recipe",
           "request": {
             "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/recipes/admin/{{recipeId}}",
             "auth": {
               "type": "bearer",
@@ -2075,13 +2224,34 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"recipeName\": \"High Protein Oat Bowl Updated\",\n  \"caloriesKcal\": 430,\n  \"status\": \"published\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "recipeName",
+                  "type": "text",
+                  "value": "High Protein Oat Bowl Updated"
+                },
+                {
+                  "key": "caloriesKcal",
+                  "type": "text",
+                  "value": "430"
+                },
+                {
+                  "key": "status",
+                  "type": "text",
+                  "value": "published"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "recipes"
+                },
+                {
+                  "key": "recipeImages",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           }
         },
@@ -2148,12 +2318,7 @@
           "name": "Exercise Management - Create Exercise",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/exercises/admin",
             "auth": {
               "type": "bearer",
@@ -2166,13 +2331,69 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"exerciseName\": \"Chest Press Machines\",\n  \"userType\": \"all_user\",\n  \"description\": \"Starting with your hands around shoulder height and controlled pressing motion.\",\n  \"keyBenefits\": [\n    \"Works multiple muscle groups\",\n    \"Builds upper body strength\"\n  ],\n  \"muscleGroups\": [\n    \"Chest\",\n    \"Shoulders\",\n    \"Arms\"\n  ],\n  \"exerciseImages\": [\n    {\n      \"url\": \"https://example.com/exercise-image.jpg\"\n    }\n  ],\n  \"targetMuscleImages\": [\n    {\n      \"url\": \"https://example.com/target-front.png\"\n    },\n    {\n      \"url\": \"https://example.com/target-back.png\"\n    }\n  ],\n  \"demoVideos\": [\n    {\n      \"url\": \"https://example.com/exercise-demo.mp4\"\n    }\n  ],\n  \"isVisibleInLibrary\": true,\n  \"status\": \"published\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "exerciseName",
+                  "type": "text",
+                  "value": "Chest Press Machines"
+                },
+                {
+                  "key": "userType",
+                  "type": "text",
+                  "value": "all_user"
+                },
+                {
+                  "key": "description",
+                  "type": "text",
+                  "value": "Starting with your hands around shoulder height and controlled pressing motion."
+                },
+                {
+                  "key": "keyBenefits",
+                  "type": "text",
+                  "value": "[\"Works multiple muscle groups\",\"Builds upper body strength\"]"
+                },
+                {
+                  "key": "muscleGroups",
+                  "type": "text",
+                  "value": "[\"Chest\",\"Shoulders\",\"Arms\"]"
+                },
+                {
+                  "key": "demoVideos",
+                  "type": "text",
+                  "value": "https://example.com/exercise-demo.mp4"
+                },
+                {
+                  "key": "isVisibleInLibrary",
+                  "type": "text",
+                  "value": "true"
+                },
+                {
+                  "key": "status",
+                  "type": "text",
+                  "value": "published"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "exercises"
+                },
+                {
+                  "key": "exerciseImages",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "targetMuscleImages",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "targetMuscleImages",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           },
           "event": [
@@ -2212,12 +2433,7 @@
           "name": "Exercise Management - Update Exercise",
           "request": {
             "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}",
             "auth": {
               "type": "bearer",
@@ -2230,13 +2446,34 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"exerciseName\": \"Chest Press Machines Updated\",\n  \"status\": \"published\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "exerciseName",
+                  "type": "text",
+                  "value": "Chest Press Machines Updated"
+                },
+                {
+                  "key": "status",
+                  "type": "text",
+                  "value": "published"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "exercises"
+                },
+                {
+                  "key": "exerciseImages",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "targetMuscleImages",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           }
         },
@@ -2586,12 +2823,7 @@
           "name": "Settings Profile Screen - Update Profile",
           "request": {
             "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/admin/settings/profile",
             "auth": {
               "type": "bearer",
@@ -2604,13 +2836,39 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Admin\",\n  \"lastName\": \"User\",\n  \"phone\": \"+15555550123\",\n  \"bio\": \"Backend admin account\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "firstName",
+                  "type": "text",
+                  "value": "Admin"
+                },
+                {
+                  "key": "lastName",
+                  "type": "text",
+                  "value": "User"
+                },
+                {
+                  "key": "phone",
+                  "type": "text",
+                  "value": "+15555550123"
+                },
+                {
+                  "key": "bio",
+                  "type": "text",
+                  "value": "Backend admin account"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "profiles"
+                },
+                {
+                  "key": "profileImage",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             }
           }
         },

@@ -3,6 +3,7 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { User } from "../models/user.model.js";
@@ -10,6 +11,8 @@ import { User } from "../models/user.model.js";
 const PROGRAM_LEVELS = new Set(["beginner", "intermediate", "advanced"]);
 const PROGRAM_USER_TYPES = new Set(["normal_user", "premium_user"]);
 const PROGRAM_STATUSES = new Set(["draft", "published", "archived"]);
+const PROGRAM_IMAGE_FIELDS = ["programImages", "programImage", "coverImage"];
+const PROGRAM_THUMBNAIL_FIELDS = ["programThumbnails", "programThumbnail", "thumbnailImage"];
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -725,8 +728,14 @@ const populateProgramQuery = (query) =>
       },
     });
 
+const getProgramBodyFromRequest = (req) =>
+  mergeUploadedMediaIntoBody(req.body, req.files, [
+    { target: "programImages", fieldNames: PROGRAM_IMAGE_FIELDS },
+    { target: "programThumbnails", fieldNames: PROGRAM_THUMBNAIL_FIELDS },
+  ]);
+
 export const createProgram = catchAsync(async (req, res) => {
-  const payload = await buildCreatePayload(req.body);
+  const payload = await buildCreatePayload(getProgramBodyFromRequest(req));
 
   const program = await Program.create({
     ...payload,
@@ -821,7 +830,7 @@ export const updateAdminProgram = catchAsync(async (req, res) => {
     throw new AppError("Program not found.", httpStatus.NOT_FOUND);
   }
 
-  const updates = await buildUpdatePayload(req.body, program);
+  const updates = await buildUpdatePayload(getProgramBodyFromRequest(req), program);
   if (Object.keys(updates).length === 0) {
     throw new AppError("No valid fields were provided for update.", httpStatus.BAD_REQUEST);
   }

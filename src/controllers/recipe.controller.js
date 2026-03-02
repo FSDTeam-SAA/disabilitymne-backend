@@ -3,11 +3,13 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Recipe } from "../models/recipe.model.js";
 import { User } from "../models/user.model.js";
 
 const RECIPE_USER_TYPES = new Set(["normal_user", "premium_user"]);
 const RECIPE_STATUSES = new Set(["draft", "published", "archived"]);
+const RECIPE_IMAGE_FIELDS = ["recipeImages", "recipeImage", "image"];
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -497,8 +499,11 @@ const buildUserAccessibleFilter = (user) => {
   return filter;
 };
 
+const getRecipeBodyFromRequest = (req) =>
+  mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "recipeImages", fieldNames: RECIPE_IMAGE_FIELDS }]);
+
 export const createRecipe = catchAsync(async (req, res) => {
-  const payload = await buildCreatePayload(req.body);
+  const payload = await buildCreatePayload(getRecipeBodyFromRequest(req));
 
   const recipe = await Recipe.create({
     ...payload,
@@ -587,7 +592,7 @@ export const updateAdminRecipe = catchAsync(async (req, res) => {
     throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
   }
 
-  const updates = await buildUpdatePayload(req.body, recipe);
+  const updates = await buildUpdatePayload(getRecipeBodyFromRequest(req), recipe);
   if (Object.keys(updates).length === 0) {
     throw new AppError("No valid fields were provided for update.", httpStatus.BAD_REQUEST);
   }

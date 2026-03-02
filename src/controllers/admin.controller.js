@@ -9,9 +9,11 @@ import { SubscriptionPlan } from "../models/subscriptionPlan.model.js";
 import { SupportTicket } from "../models/supportTicket.model.js";
 import { PLAN_KEYS, SUBSCRIPTION_PLANS } from "../constants/subscriptionPlans.js";
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
+import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
 const SUPPORT_TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
+const PROFILE_IMAGE_FIELDS = ["profileImage", "avatar", "image"];
 
 const PLAN_LABELS = {
   free_trial: "Free Trial user",
@@ -143,6 +145,42 @@ const normalizeAccountStatus = (value) => {
   return status;
 };
 
+const normalizeProfileImage = (value) => {
+  if (value === null || value === "") {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    const url = asString(value);
+    return url
+      ? {
+        url,
+        publicId: "",
+        mimetype: "",
+        size: 0,
+      }
+      : null;
+  }
+
+  if (typeof value !== "object") {
+    throw new AppError("profileImage must be a string URL or media object.", httpStatus.BAD_REQUEST);
+  }
+
+  const url = asString(value.url || value.path || value.secure_url);
+  if (!url) {
+    throw new AppError("profileImage.url is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const size = Number(value.size);
+
+  return {
+    url,
+    publicId: asString(value.publicId || value.public_id || value.filename),
+    mimetype: asString(value.mimetype || value.resource_type || value.format),
+    size: Number.isFinite(size) && size > 0 ? size : 0,
+  };
+};
+
 const formatCurrencyAmount = (amount) => Number(amount || 0).toFixed(2);
 
 const buildMonthLabels = (months = 12) => {
@@ -224,6 +262,9 @@ const toAdminSupportTicketResponse = (ticket) => ({
   createdAt: ticket.createdAt,
   updatedAt: ticket.updatedAt,
 });
+
+const getAdminProfileBodyFromRequest = (req) =>
+  mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
 
 const getDefaultPlanByKey = (planKey) => SUBSCRIPTION_PLANS.find((plan) => plan.key === planKey);
 
@@ -540,7 +581,9 @@ export const updateAdminSettingsProfile = catchAsync(async (req, res) => {
     throw new AppError("Admin not found.", httpStatus.NOT_FOUND);
   }
 
-  const emailInput = asString(req.body.email).toLowerCase();
+  const payload = getAdminProfileBodyFromRequest(req);
+
+  const emailInput = asString(payload.email).toLowerCase();
   if (emailInput && emailInput !== admin.email) {
     const existing = await User.findOne({ email: emailInput, _id: { $ne: admin._id } });
     if (existing) {
@@ -549,10 +592,11 @@ export const updateAdminSettingsProfile = catchAsync(async (req, res) => {
     admin.email = emailInput;
   }
 
-  if (Object.hasOwn(req.body, "firstName")) admin.firstName = asString(req.body.firstName);
-  if (Object.hasOwn(req.body, "lastName")) admin.lastName = asString(req.body.lastName);
-  if (Object.hasOwn(req.body, "phone")) admin.phone = asString(req.body.phone);
-  if (Object.hasOwn(req.body, "bio")) admin.bio = asString(req.body.bio);
+  if (Object.hasOwn(payload, "firstName")) admin.firstName = asString(payload.firstName);
+  if (Object.hasOwn(payload, "lastName")) admin.lastName = asString(payload.lastName);
+  if (Object.hasOwn(payload, "phone")) admin.phone = asString(payload.phone);
+  if (Object.hasOwn(payload, "bio")) admin.bio = asString(payload.bio);
+  if (Object.hasOwn(payload, "profileImage")) admin.profileImage = normalizeProfileImage(payload.profileImage);
 
   await admin.save();
 
