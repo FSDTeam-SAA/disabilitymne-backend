@@ -6,9 +6,9 @@ Includes:
 - Cloudinary file uploads using `multer` + `multer-storage-cloudinary`
 - JWT auth (register/login/protected routes)
 - Refresh-token auth rotation (`accessToken` + `refreshToken`)
-- OTP-based password reset flow
+- OTP-based password reset flow with branded email delivery
 - User onboarding + plan selection APIs
-- Payment model + mock checkout APIs
+- Payment model + mock checkout APIs with receipt emails
 - Programs/Exercises APIs with global and premium-assigned visibility
 - Recipes APIs with global and premium-assigned visibility
 - `catchAsync` helper for async controllers
@@ -23,6 +23,21 @@ npm install
 cp .env.example .env
 npm run dev
 ```
+
+Configure SMTP values in `.env` if you want password-reset OTP emails and payment receipts to be sent:
+
+```env
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_smtp_username
+SMTP_PASS=your_smtp_password
+EMAIL_FROM_NAME=DisabilityMNE
+EMAIL_FROM_ADDRESS=no-reply@example.com
+APP_BASE_URL=http://localhost:3000
+```
+
+If SMTP settings are missing, the backend will continue working and log that email delivery was skipped.
 
 ## Upload Example
 

@@ -9,6 +9,8 @@ import {
   signRefreshToken,
   verifyRefreshToken,
 } from "../utils/authToken.js";
+import { sendEmail } from "../services/email.service.js";
+import { buildPasswordResetOtpEmail } from "../utils/emailTemplates.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { User } from "../models/user.model.js";
 
@@ -144,8 +146,22 @@ export const sendPasswordResetOtp = catchAsync(async (req, res) => {
   }
 
   const otp = createOtp();
-  user.setPasswordResetOtp(otp, getOtpExpiryMinutes());
+  const otpExpiryMinutes = getOtpExpiryMinutes();
+  user.setPasswordResetOtp(otp, otpExpiryMinutes);
   await user.save({ validateBeforeSave: false });
+
+  const emailTemplate = buildPasswordResetOtpEmail({
+    firstName: user.firstName,
+    otp,
+    expiresInMinutes: otpExpiryMinutes,
+  });
+
+  await sendEmail({
+    to: user.email,
+    subject: emailTemplate.subject,
+    html: emailTemplate.html,
+    text: emailTemplate.text,
+  });
 
   const payload = { ...genericResponse };
 

@@ -4,6 +4,8 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { Payment } from "../models/payment.model.js";
 import { getActivePlans, getPlanByKey } from "../services/subscriptionPlan.service.js";
+import { sendEmail } from "../services/email.service.js";
+import { buildPaymentReceiptEmail } from "../utils/emailTemplates.js";
 import { serializeUser } from "../utils/serializeUser.js";
 
 const addMonths = (date, months) => {
@@ -153,6 +155,26 @@ export const checkout = catchAsync(async (req, res) => {
 
   activateUserPlan(req.user, plan);
   await req.user.save({ validateBeforeSave: false });
+
+  const receiptTemplate = buildPaymentReceiptEmail({
+    firstName: req.user.firstName,
+    planName: payment.planName,
+    amount: payment.amount,
+    currency: payment.currency,
+    paymentMethod: payment.paymentMethod,
+    cardBrand: payment.cardBrand,
+    cardLast4: payment.cardLast4,
+    transactionId: payment.transactionId,
+    paidAt: payment.paidAt,
+    subscriptionEndsAt: req.user.subscriptionEndsAt,
+  });
+
+  await sendEmail({
+    to: req.user.email,
+    subject: receiptTemplate.subject,
+    html: receiptTemplate.html,
+    text: receiptTemplate.text,
+  });
 
   res.status(httpStatus.CREATED).json({
     success: true,
