@@ -2,6 +2,15 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 
+const buildUploadResult = (file) => ({
+  filename: file.filename,
+  publicId: file.filename,
+  path: file.path,
+  url: file.path,
+  size: file.size,
+  mimetype: file.mimetype,
+});
+
 /**
  * POST /api/v1/uploads/image
  * form-data: file=<image>, folder=<optional>
@@ -9,18 +18,23 @@ import { catchAsync } from "../utils/catchAsync.js";
 export const uploadSingleImage = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError("No file found in request. Use form-data key: file", httpStatus.BAD_REQUEST);
 
-  // multer-storage-cloudinary provides these fields on req.file:
-  // https://www.npmjs.com/package/multer-storage-cloudinary
-  const result = {
-    filename: req.file.filename,
-    path: req.file.path, // secure_url
-    size: req.file.size,
-    mimetype: req.file.mimetype,
-  };
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Upload successful",
+    data: buildUploadResult(req.file),
+  });
+});
+
+/**
+ * POST /api/v1/uploads/video
+ * form-data: file=<video>, folder=<optional>
+ */
+export const uploadSingleVideo = catchAsync(async (req, res) => {
+  if (!req.file) throw new AppError("No file found in request. Use form-data key: file", httpStatus.BAD_REQUEST);
 
   res.status(httpStatus.CREATED).json({
     success: true,
     message: "Upload successful",
-    data: result,
+    data: buildUploadResult(req.file),
   });
 });

@@ -11,6 +11,7 @@ import { User } from "../models/user.model.js";
 const EXERCISE_STATUSES = new Set(["draft", "published", "archived"]);
 const EXERCISE_IMAGE_FIELDS = ["exerciseImages", "exerciseImage", "image"];
 const TARGET_MUSCLE_IMAGE_FIELDS = ["targetMuscleImages", "targetMuscleImage", "muscleImages", "muscleImage"];
+const DEMO_VIDEO_FIELDS = ["demoVideos", "demoVideo", "exerciseVideo", "exerciseVideos", "video"];
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -295,7 +296,7 @@ const buildCreatePayload = async (body) => {
     getField(parsedBody, ["targetMuscleImages", "targetMuscleImage", "muscleImages", "muscleImage"]).value
   );
   const demoVideos = normalizeMediaList(
-    getField(parsedBody, ["demoVideos", "demoVideo", "exerciseVideo", "exerciseVideos", "video"]).value
+    getField(parsedBody, DEMO_VIDEO_FIELDS).value
   );
   const status = normalizeExerciseStatus(getField(parsedBody, ["status"]).value || "published");
   const isVisibleInLibrary = parseBoolean(
@@ -379,7 +380,7 @@ const buildUpdatePayload = async (body, currentExercise) => {
     updates.targetMuscleImages = normalizeMediaList(targetMuscleImagesInput.value);
   }
 
-  const demoVideosInput = getField(parsedBody, ["demoVideos", "demoVideo", "exerciseVideo", "exerciseVideos", "video"]);
+  const demoVideosInput = getField(parsedBody, DEMO_VIDEO_FIELDS);
   if (demoVideosInput.provided) {
     const demoVideos = normalizeMediaList(demoVideosInput.value);
     if (demoVideos.length === 0) {
@@ -453,6 +454,7 @@ const getExerciseBodyFromRequest = (req) =>
   mergeUploadedMediaIntoBody(req.body, req.files, [
     { target: "exerciseImages", fieldNames: EXERCISE_IMAGE_FIELDS },
     { target: "targetMuscleImages", fieldNames: TARGET_MUSCLE_IMAGE_FIELDS },
+    { target: "demoVideos", fieldNames: DEMO_VIDEO_FIELDS },
   ]);
 
 export const createExercise = catchAsync(async (req, res) => {
