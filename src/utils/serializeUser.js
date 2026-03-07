@@ -1,3 +1,5 @@
+import { toMediaUrl } from "./mediaResponse.js";
+
 export const serializeUser = (user) => ({
   id: user._id,
   role: user.role || "user",
@@ -13,7 +15,7 @@ export const serializeUser = (user) => ({
     reducedMotion: Boolean(user.accessibilityPreferences?.reducedMotion),
     screenReaderOptimized: Boolean(user.accessibilityPreferences?.screenReaderOptimized),
   },
-  profileImage: user.profileImage || null,
+  profileImage: toMediaUrl(user.profileImage),
   gender: user.gender || null,
   age: user.age ?? null,
   weightCurrent: user.weightCurrent || null,
