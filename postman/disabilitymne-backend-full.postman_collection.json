@@ -39,6 +39,29 @@
               ]
             }
           }
+        },
+        {
+          "name": "Upload Video Asset",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/uploads/video",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "exercise-videos"
+                }
+              ]
+            }
+          }
         }
       ]
     },
@@ -2359,9 +2382,9 @@
                   "value": "[\"Chest\",\"Shoulders\",\"Arms\"]"
                 },
                 {
-                  "key": "demoVideos",
-                  "type": "text",
-                  "value": "https://example.com/exercise-demo.mp4"
+                  "key": "demoVideo",
+                  "type": "file",
+                  "src": ""
                 },
                 {
                   "key": "isVisibleInLibrary",
@@ -2470,6 +2493,11 @@
                 },
                 {
                   "key": "targetMuscleImages",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "demoVideo",
                   "type": "file",
                   "src": ""
                 }

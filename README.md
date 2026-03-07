@@ -14,7 +14,7 @@ Includes:
 - `catchAsync` helper for async controllers
 - Global error handler + `AppError`
 - Security + common middlewares: Helmet, CORS, Mongo sanitize, HPP
-- Example Upload API (`POST /api/v1/uploads/image`)
+- Example Upload APIs (`POST /api/v1/uploads/image`, `POST /api/v1/uploads/video`)
 
 ## Quick Start
 
@@ -41,7 +41,7 @@ If SMTP settings are missing, the backend will continue working and log that ema
 
 ## Upload Example
 
-`POST /api/v1/uploads/image` with form-data:
+`POST /api/v1/uploads/image` or `POST /api/v1/uploads/video` with form-data:
 - key: `file` (type: File)
 - optional: `folder` (string)
 
@@ -60,12 +60,12 @@ These endpoints now expect `multipart/form-data` when you want to upload images 
 - `POST|PATCH /api/v1/recipes/admin`
   - image field: `recipeImages`
 - `POST|PATCH /api/v1/exercises/admin`
-  - image fields: `exerciseImages`, `targetMuscleImages`
+  - media fields: `exerciseImages`, `targetMuscleImages`, `demoVideo`/`demoVideos`
 
 Notes:
 - Include optional `folder` in form-data if you want a custom Cloudinary folder.
-- Non-image values can stay as regular text fields in the same multipart request.
-- Exercise demo videos remain text/media URL payloads for now; only image uploads were switched to form-data.
+- Non-file values can stay as regular text fields in the same multipart request.
+- Exercise demo videos can now be uploaded directly in the same multipart request and are stored in Cloudinary before saving to `demoVideos`.
 
 ## Auth APIs
 

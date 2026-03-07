@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
-import { uploadImageFields } from "../middlewares/upload.js";
+import { uploadMediaFields } from "../middlewares/upload.js";
 import {
   createExercise,
   deleteAdminExercise,
@@ -17,7 +17,7 @@ import {
 
 const router = Router();
 const adminRouter = Router();
-const uploadExerciseImages = uploadImageFields([
+const uploadExerciseMedia = uploadMediaFields([
   { name: "exerciseImages", maxCount: 10 },
   { name: "exerciseImage", maxCount: 10 },
   { name: "image", maxCount: 10 },
@@ -25,14 +25,19 @@ const uploadExerciseImages = uploadImageFields([
   { name: "targetMuscleImage", maxCount: 10 },
   { name: "muscleImages", maxCount: 10 },
   { name: "muscleImage", maxCount: 10 },
+  { name: "demoVideos", maxCount: 10 },
+  { name: "demoVideo", maxCount: 10 },
+  { name: "exerciseVideo", maxCount: 10 },
+  { name: "exerciseVideos", maxCount: 10 },
+  { name: "video", maxCount: 10 },
 ]);
 
 router.use(protect);
 
 adminRouter.get("/premium-users", listPremiumUsersForExercises);
-adminRouter.route("/").get(getAdminExercises).post(uploadExerciseImages, createExercise);
+adminRouter.route("/").get(getAdminExercises).post(uploadExerciseMedia, createExercise);
 adminRouter.patch("/:exerciseId/visibility", updateExerciseVisibility);
-adminRouter.route("/:exerciseId").get(getAdminExerciseById).patch(uploadExerciseImages, updateAdminExercise).delete(deleteAdminExercise);
+adminRouter.route("/:exerciseId").get(getAdminExerciseById).patch(uploadExerciseMedia, updateAdminExercise).delete(deleteAdminExercise);
 
 router.use("/admin", restrictTo("admin"), adminRouter);
 
