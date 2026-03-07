@@ -3,12 +3,7 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 
 const buildUploadResult = (file) => ({
-  filename: file.filename,
-  publicId: file.filename,
-  path: file.path,
   url: file.path,
-  size: file.size,
-  mimetype: file.mimetype,
 });
 
 /**

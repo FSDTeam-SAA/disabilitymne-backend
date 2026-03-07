@@ -3,6 +3,7 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
@@ -228,12 +229,12 @@ const buildExerciseSummary = (exercise, programNames = []) => ({
   description: exercise.description,
   keyBenefits: exercise.keyBenefits || [],
   muscleGroups: exercise.muscleGroups || [],
-  exerciseImage: exercise.exerciseImages?.[0] || null,
-  demoVideo: exercise.demoVideos?.[0] || null,
-  targetMuscleImage: exercise.targetMuscleImages?.[0] || null,
-  exerciseImages: exercise.exerciseImages || [],
-  targetMuscleImages: exercise.targetMuscleImages || [],
-  demoVideos: exercise.demoVideos || [],
+  exerciseImage: toMediaUrl(exercise.exerciseImages?.[0]),
+  demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
+  targetMuscleImage: toMediaUrl(exercise.targetMuscleImages?.[0]),
+  exerciseImages: toMediaUrlList(exercise.exerciseImages),
+  targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
+  demoVideos: toMediaUrlList(exercise.demoVideos),
   isVisibleInLibrary: exercise.isVisibleInLibrary,
   status: exercise.status,
   isActive: exercise.isActive,

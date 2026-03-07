@@ -38,7 +38,22 @@
                 }
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.url;",
+                  "if (value) pm.collectionVariables.set('uploadedImageUrl', value);",
+                  "if (value) pm.expect(value).to.be.a('string');"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Upload Video Asset",
@@ -61,7 +76,22 @@
                 }
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.url;",
+                  "if (value) pm.collectionVariables.set('uploadedVideoUrl', value);",
+                  "if (value) pm.expect(value).to.be.a('string');"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -716,7 +746,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"programId\": \"{{programId}}\",\n  \"exerciseName\": \"Seated Dumbbell Press\",\n  \"sets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"weightKg\": 6\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"weightKg\": 6\n    }\n  ],\n  \"caloriesBurned\": 50,\n  \"durationMinutes\": 15,\n  \"notes\": \"Felt strong\"\n}",
+              "raw": "{\n  \"programId\": \"{{programId}}\",\n  \"exerciseName\": \"Seated Dumbbell Press\",\n  \"sets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"weightKg\": 6,\n      \"durationSeconds\": 45\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"weightKg\": 6,\n      \"durationSeconds\": 40\n    }\n  ],\n  \"caloriesBurned\": 50,\n  \"durationMinutes\": 15,\n  \"notes\": \"Felt strong\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1123,7 +1153,26 @@
                 }
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const program = Array.isArray(data?.data) ? data.data[0] : null;",
+                  "if (!program) return;",
+                  "pm.expect(Array.isArray(program.exerciseIds)).to.eql(true);",
+                  "pm.expect(Array.isArray(program.exercises)).to.eql(true);",
+                  "if (program.exerciseIds[0]) pm.expect(program.exerciseIds[0]).to.be.a('string');",
+                  "if (program.programImage) pm.expect(program.programImage).to.be.a('string');",
+                  "if (program.programThumbnail) pm.expect(program.programThumbnail).to.be.a('string');"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Program Details Screen - Program Detail",
@@ -1141,7 +1190,26 @@
                 }
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const program = data?.data;",
+                  "if (!program) return;",
+                  "pm.expect(Array.isArray(program.exerciseIds)).to.eql(true);",
+                  "pm.expect(Array.isArray(program.exercises)).to.eql(true);",
+                  "if (program.exerciseIds[0]) pm.expect(program.exerciseIds[0]).to.be.a('string');",
+                  "if (program.exercises[0]?.demoVideo) pm.expect(program.exercises[0].demoVideo).to.be.a('string');",
+                  "if (program.programImage) pm.expect(program.programImage).to.be.a('string');"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Explore Recipes Screen - Shared Recipes",
@@ -1881,7 +1949,24 @@
                 }
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const program = Array.isArray(data?.data) ? data.data[0] : null;",
+                  "if (!program) return;",
+                  "pm.expect(Array.isArray(program.exerciseIds)).to.eql(true);",
+                  "pm.expect(Array.isArray(program.exercises)).to.eql(true);",
+                  "if (program.programImage) pm.expect(program.programImage).to.be.a('string');"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Program Management - Create Program",
@@ -1996,7 +2081,26 @@
                 }
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const program = data?.data;",
+                  "if (!program) return;",
+                  "pm.expect(Array.isArray(program.exerciseIds)).to.eql(true);",
+                  "pm.expect(Array.isArray(program.exercises)).to.eql(true);",
+                  "if (program.exerciseIds[0]) pm.expect(program.exerciseIds[0]).to.be.a('string');",
+                  "if (program.exercises[0]?.image) pm.expect(program.exercises[0].image).to.be.a('string');",
+                  "if (program.programThumbnail) pm.expect(program.programThumbnail).to.be.a('string');"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Program Management - Update Program",

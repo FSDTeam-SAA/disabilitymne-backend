@@ -3,6 +3,7 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Recipe } from "../models/recipe.model.js";
 import { User } from "../models/user.model.js";
@@ -260,8 +261,8 @@ const buildRecipeSummary = (recipe) => {
     carbsG: recipe.carbsG,
     fatG: recipe.fatG,
     nutritionSummary: `${recipe.caloriesKcal}kcal, ${recipe.proteinG}gprotein, ${recipe.carbsG}gcarbs, ${recipe.fatG}gfat`,
-    recipeImage: recipe.recipeImages?.[0] || null,
-    recipeImages: recipe.recipeImages || [],
+    recipeImage: toMediaUrl(recipe.recipeImages?.[0]),
+    recipeImages: toMediaUrlList(recipe.recipeImages),
     status: recipe.status,
     isActive: recipe.isActive,
     createdAt: recipe.createdAt,

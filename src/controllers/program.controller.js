@@ -3,6 +3,7 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
@@ -372,8 +373,30 @@ const toAssignedUser = (assignedUser) => {
   return assignedUser || null;
 };
 
+const toIdString = (value) => {
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "object" && value._id) {
+    return value._id.toString();
+  }
+
+  if (typeof value.toString === "function") {
+    const asText = value.toString();
+    return asText && asText !== "[object Object]" ? asText : null;
+  }
+
+  return null;
+};
+
+const isPopulatedExerciseRef = (exerciseRef) =>
+  Boolean(exerciseRef && typeof exerciseRef === "object" && "exerciseName" in exerciseRef);
+
 const mapExerciseFromLibrary = (exercise, index) => ({
-  id: exercise._id,
+  id: toIdString(exercise._id),
   exerciseName: exercise.exerciseName,
   name: exercise.exerciseName,
   order: index + 1,
@@ -383,13 +406,18 @@ const mapExerciseFromLibrary = (exercise, index) => ({
   description: exercise.description || "",
   keyBenefits: exercise.keyBenefits || [],
   muscleGroups: exercise.muscleGroups || [],
-  exerciseImages: exercise.exerciseImages || [],
-  image: exercise.exerciseImages?.[0] || null,
-  targetMuscleImages: exercise.targetMuscleImages || [],
-  targetMuscleImage: exercise.targetMuscleImages?.[0] || null,
-  demoVideos: exercise.demoVideos || [],
-  demoVideo: exercise.demoVideos?.[0] || null,
+  exerciseImages: toMediaUrlList(exercise.exerciseImages),
+  image: toMediaUrl(exercise.exerciseImages?.[0]),
+  targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
+  targetMuscleImage: toMediaUrl(exercise.targetMuscleImages?.[0]),
+  demoVideos: toMediaUrlList(exercise.demoVideos),
+  demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
+  defaultSets: [],
+  durationSeconds: null,
+  calories: null,
   isVisibleInLibrary: exercise.isVisibleInLibrary,
+  status: exercise.status,
+  isActive: exercise.isActive,
 });
 
 const mapLegacyExercise = (exercise) => {
@@ -410,68 +438,76 @@ const mapLegacyExercise = (exercise) => {
   const targetMuscleImages = Array.isArray(exercise.targetMuscleImages) ? exercise.targetMuscleImages : [];
 
   return {
-    id: null,
+    id: toIdString(exercise._id),
     exerciseName: exercise.name,
     name: exercise.name,
     order: exercise.order,
     description: exercise.description || "",
     keyBenefits: exercise.keyBenefits || [],
-    demoVideos,
-    demoVideo: demoVideos[0] || null,
-    exerciseImages,
-    image: exerciseImages[0] || null,
-    targetMuscleImages,
-    targetMuscleImage: targetMuscleImages[0] || null,
+    demoVideos: toMediaUrlList(demoVideos),
+    demoVideo: toMediaUrl(demoVideos[0]),
+    exerciseImages: toMediaUrlList(exerciseImages),
+    image: toMediaUrl(exerciseImages[0]),
+    targetMuscleImages: toMediaUrlList(targetMuscleImages),
+    targetMuscleImage: toMediaUrl(targetMuscleImages[0]),
     defaultSets: exercise.defaultSets || [],
     durationSeconds: exercise.durationSeconds ?? null,
     calories: exercise.calories ?? null,
   };
 };
 
-const buildProgramSummary = (program) => ({
-  id: program._id,
-  programName: program.programName,
-  programDuration: program.programDuration,
-  durationMinutes: program.durationMinutes,
-  programLevel: program.programLevel,
-  userType: program.userType,
-  plan: program.userType,
-  assignedUser: toAssignedUser(program.assignedUser),
-  programDescription: program.programDescription,
-  safetyNote: program.safetyNote,
-  mobilityType: program.mobilityType,
-  weekCount: program.weekCount,
-  totalExercises: program.totalExercises,
-  exerciseIds: Array.isArray(program.exerciseRefs) ? program.exerciseRefs.map((exerciseRef) => exerciseRef.toString()) : [],
-  status: program.status,
-  isActive: program.isActive,
-  programImage: program.programImages?.[0] || null,
-  programThumbnail: program.programThumbnails?.[0] || null,
-  programImages: program.programImages || [],
-  programThumbnails: program.programThumbnails || [],
-  createdAt: program.createdAt,
-  updatedAt: program.updatedAt,
-});
-
-const buildProgramDetails = (program) => {
+const buildProgramExercises = (program) => {
   const populatedLibraryExercises =
-    Array.isArray(program.exerciseRefs) && program.exerciseRefs.length > 0 && typeof program.exerciseRefs[0] === "object"
-      ? program.exerciseRefs
+    Array.isArray(program.exerciseRefs) && program.exerciseRefs.length > 0
+      ? program.exerciseRefs.filter(isPopulatedExerciseRef)
       : [];
 
-  const exercises =
-    populatedLibraryExercises.length > 0
-      ? populatedLibraryExercises.map((exercise, index) => mapExerciseFromLibrary(exercise, index))
-      : Array.isArray(program.exercises)
-        ? program.exercises.map(mapLegacyExercise)
-        : [];
+  if (populatedLibraryExercises.length > 0) {
+    return populatedLibraryExercises.map((exercise, index) => mapExerciseFromLibrary(exercise, index));
+  }
+
+  return Array.isArray(program.exercises) ? program.exercises.map(mapLegacyExercise) : [];
+};
+
+const buildProgramExerciseIds = (program, exercises) => {
+  if (Array.isArray(program.exerciseRefs) && program.exerciseRefs.length > 0) {
+    return program.exerciseRefs.map((exerciseRef) => toIdString(exerciseRef)).filter(Boolean);
+  }
+
+  return Array.isArray(exercises) ? exercises.map((exercise) => toIdString(exercise.id)).filter(Boolean) : [];
+};
+
+const buildProgramSummary = (program) => {
+  const exercises = buildProgramExercises(program);
 
   return {
-    ...buildProgramSummary(program),
+    id: program._id,
+    programName: program.programName,
+    programDuration: program.programDuration,
+    durationMinutes: program.durationMinutes,
+    programLevel: program.programLevel,
+    userType: program.userType,
+    plan: program.userType,
+    assignedUser: toAssignedUser(program.assignedUser),
+    programDescription: program.programDescription,
+    safetyNote: program.safetyNote,
+    mobilityType: program.mobilityType,
+    weekCount: program.weekCount,
     totalExercises: exercises.length || program.totalExercises || 0,
+    exerciseIds: buildProgramExerciseIds(program, exercises),
     exercises,
+    status: program.status,
+    isActive: program.isActive,
+    programImage: toMediaUrl(program.programImages?.[0]),
+    programThumbnail: toMediaUrl(program.programThumbnails?.[0]),
+    programImages: toMediaUrlList(program.programImages),
+    programThumbnails: toMediaUrlList(program.programThumbnails),
+    createdAt: program.createdAt,
+    updatedAt: program.updatedAt,
   };
 };
+
+const buildProgramDetails = (program) => buildProgramSummary(program);
 
 const buildCreatePayload = async (body) => {
   const parsedBody = body || {};
@@ -785,11 +821,12 @@ export const getAdminPrograms = catchAsync(async (req, res) => {
   }
 
   const [programs, total] = await Promise.all([
-    Program.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("assignedUser", "firstName email"),
+    populateProgramQuery(
+      Program.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+    ),
     Program.countDocuments(filter),
   ]);
 
@@ -927,7 +964,7 @@ export const getExplorePrograms = catchAsync(async (req, res) => {
   }
 
   const [programs, total] = await Promise.all([
-    Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    populateProgramQuery(Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)),
     Program.countDocuments(filter),
   ]);
 
@@ -960,7 +997,7 @@ export const getMyPrograms = catchAsync(async (req, res) => {
   }
 
   const [programs, total] = await Promise.all([
-    Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    populateProgramQuery(Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)),
     Program.countDocuments(filter),
   ]);
 
@@ -1023,7 +1060,7 @@ export const getAllAccessiblePrograms = catchAsync(async (req, res) => {
   }
 
   const [programs, total] = await Promise.all([
-    Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    populateProgramQuery(Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)),
     Program.countDocuments(filter),
   ]);
 
