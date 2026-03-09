@@ -329,10 +329,15 @@
           }
         },
         {
-          "name": "Onboarding Screen - Save Basic Profile",
+          "name": "Onboarding/Profile Screen - Save Profile + Onboarding (Single PATCH)",
           "request": {
             "method": "PATCH",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/api/v1/users/me",
             "auth": {
               "type": "bearer",
@@ -345,71 +350,8 @@
               ]
             },
             "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "firstName",
-                  "type": "text",
-                  "value": "Evan"
-                },
-                {
-                  "key": "lastName",
-                  "type": "text",
-                  "value": "Johnson"
-                },
-                {
-                  "key": "phone",
-                  "type": "text",
-                  "value": "+13075550133"
-                },
-                {
-                  "key": "bio",
-                  "type": "text",
-                  "value": "Adaptive training enthusiast"
-                },
-                {
-                  "key": "preferredLanguage",
-                  "type": "text",
-                  "value": "en"
-                },
-                {
-                  "key": "folder",
-                  "type": "text",
-                  "value": "profiles"
-                },
-                {
-                  "key": "profileImage",
-                  "type": "file",
-                  "src": ""
-                }
-              ]
-            }
-          }
-        },
-        {
-          "name": "Onboarding Screen - Save Goals & Mobility",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": "{{baseUrl}}/api/v1/users/me/onboarding",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{mobileAccessToken}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "body": {
               "mode": "raw",
-              "raw": "{\n  \"gender\": \"female\",\n  \"age\": 26,\n  \"weightCurrent\": {\n    \"value\": 72,\n    \"unit\": \"kg\"\n  },\n  \"goalWeight\": {\n    \"value\": 68,\n    \"unit\": \"kg\"\n  },\n  \"height\": {\n    \"value\": 165,\n    \"unit\": \"cm\"\n  },\n  \"fitnessGoals\": [\n    \"build_muscle\",\n    \"boost_energy\"\n  ],\n  \"mobilityType\": \"wheelchair_user\",\n  \"fitnessExperience\": \"beginner\",\n  \"onboardingStep\": 8\n}",
+              "raw": "{\n  \"firstName\": \"Evan\",\n  \"lastName\": \"Johnson\",\n  \"phone\": \"+13075550133\",\n  \"bio\": \"Adaptive training enthusiast\",\n  \"preferredLanguage\": \"en\",\n  \"gender\": \"female\",\n  \"age\": 26,\n  \"weightCurrent\": {\n    \"value\": 72,\n    \"unit\": \"kg\"\n  },\n  \"goalWeight\": {\n    \"value\": 68,\n    \"unit\": \"kg\"\n  },\n  \"height\": {\n    \"value\": 165,\n    \"unit\": \"cm\"\n  },\n  \"fitnessGoals\": [\n    \"build_muscle\",\n    \"boost_energy\"\n  ],\n  \"mobilityType\": \"wheelchair_user\",\n  \"fitnessExperience\": \"beginner\",\n  \"onboardingStep\": 8\n}",
               "options": {
                 "raw": {
                   "language": "json"

@@ -159,17 +159,6 @@ export const updateMe = catchAsync(async (req, res) => {
   });
 });
 
-export const updateOnboarding = catchAsync(async (req, res) => {
-  applyOnboardingUpdates(req.user, getProfileBodyFromRequest(req));
-  await req.user.save();
-
-  res.status(httpStatus.OK).json({
-    success: true,
-    message: "Onboarding step saved successfully.",
-    data: serializeUser(req.user),
-  });
-});
-
 export const selectPlan = catchAsync(async (req, res) => {
   const { planKey } = req.body;
 

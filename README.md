@@ -51,7 +51,7 @@ Response returns Cloudinary `secure_url` etc.
 
 These endpoints now expect `multipart/form-data` when you want to upload images directly instead of passing image URLs:
 
-- `PATCH /api/v1/users/me` and `PATCH /api/v1/users/me/onboarding`
+- `PATCH /api/v1/users/me` (single endpoint for profile + onboarding fields)
   - image field: `profileImage`
 - `PATCH /api/v1/admin/settings/profile`
   - image field: `profileImage`
@@ -82,8 +82,8 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 ## User APIs (Protected)
 
 - `GET /api/v1/users/me`
-- `PATCH /api/v1/users/me`
-- `PATCH /api/v1/users/me/onboarding`
+- `PATCH /api/v1/users/me` (updates both profile and onboarding fields)
+- `PATCH /api/v1/users/me/onboarding` (backward-compatible alias of `/me`)
 - `POST /api/v1/users/me/select-plan`
 - `GET /api/v1/users/me/home` (home dashboard cards: welcome, stats, my programs, my recipes)
 - `GET /api/v1/users/me/profile` (profile payload)
