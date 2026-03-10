@@ -263,8 +263,15 @@ const toAdminSupportTicketResponse = (ticket) => ({
   updatedAt: ticket.updatedAt,
 });
 
-const getAdminProfileBodyFromRequest = (req) =>
-  mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+const getAdminProfileBodyFromRequest = (req) => {
+  const payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+
+  if (Array.isArray(payload.profileImage)) {
+    payload.profileImage = payload.profileImage[0] || null;
+  }
+
+  return payload;
+};
 
 const getDefaultPlanByKey = (planKey) => SUBSCRIPTION_PLANS.find((plan) => plan.key === planKey);
 
@@ -801,3 +808,4 @@ export const deleteAdminSubscriptionPlan = catchAsync(async (req, res) => {
     message: "Subscription plan deleted successfully.",
   });
 });
+

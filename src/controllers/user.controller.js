@@ -138,8 +138,15 @@ const applyOnboardingUpdates = (user, payload) => {
   }
 };
 
-const getProfileBodyFromRequest = (req) =>
-  mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+const getProfileBodyFromRequest = (req) => {
+  const payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+
+  if (Array.isArray(payload.profileImage)) {
+    payload.profileImage = payload.profileImage[0] || null;
+  }
+
+  return payload;
+};
 
 export const getMe = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
@@ -201,3 +208,4 @@ export const selectPlan = catchAsync(async (req, res) => {
     },
   });
 });
+
