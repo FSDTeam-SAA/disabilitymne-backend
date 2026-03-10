@@ -493,6 +493,60 @@ export const addDailyTrackerNote = catchAsync(async (req, res) => {
   });
 });
 
+export const getMyDailyTrackerNotes = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const match = { user: req.user._id };
+
+  if (req.query.weekStartDate) {
+    match.weekStartDate = getWeekStartDate(req.query.weekStartDate);
+  }
+
+  const [notes, totalAgg] = await Promise.all([
+    DailyTracker.aggregate([
+      { $match: match },
+      { $unwind: "$notes" },
+      {
+        $project: {
+          _id: 0,
+          trackerId: "$_id",
+          weekStartDate: 1,
+          weekNumber: 1,
+          text: "$notes.text",
+          dayIndex: "$notes.dayIndex",
+          createdAt: "$notes.createdAt",
+        },
+      },
+      { $sort: { createdAt: -1, trackerId: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+    ]),
+    DailyTracker.aggregate([{ $match: match }, { $unwind: "$notes" }, { $count: "total" }]),
+  ]);
+
+  const total = totalAgg[0]?.total || 0;
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: notes.map((note) => ({
+      trackerId: note.trackerId,
+      weekStartDate: note.weekStartDate,
+      weekNumber: note.weekNumber,
+      dayIndex: note.dayIndex,
+      text: note.text,
+      createdAt: note.createdAt || null,
+      date: note.createdAt ? dateToYmd(note.createdAt) : null,
+    })),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});
+
 export const createWorkoutLog = catchAsync(async (req, res) => {
   const programId = parseObjectId(req.body.programId, "programId");
   const exerciseName = asString(req.body.exerciseName);
@@ -826,12 +880,16 @@ export const updateAccessibilityPreferences = catchAsync(async (req, res) => {
 });
 
 export const createSupportTicket = catchAsync(async (req, res) => {
-  const email = asString(req.body.email || req.user.email).toLowerCase();
+  const email = asString(req.user?.email).toLowerCase();
   const subject = asString(req.body.subject);
   const description = asString(req.body.description);
 
-  if (!email || !subject || !description) {
-    throw new AppError("email, subject and description are required.", httpStatus.BAD_REQUEST);
+  if (!email) {
+    throw new AppError("Authenticated user email is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!subject || !description) {
+    throw new AppError("subject and description are required.", httpStatus.BAD_REQUEST);
   }
 
   if (description.length > 300) {
