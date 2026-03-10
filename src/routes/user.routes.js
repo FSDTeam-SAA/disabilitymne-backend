@@ -11,6 +11,7 @@ import {
   getAccessibilityPreferences,
   getHomeOverview,
   getLanguagePreference,
+  getMyDailyTrackerNotes,
   getMyPublicProfile,
   getMySupportTickets,
   getNotificationList,
@@ -40,6 +41,7 @@ router.get("/me/home", getHomeOverview);
 router.get("/me/profile", getMyPublicProfile);
 router.get("/me/progress", getProgressOverview);
 router.get("/me/daily-tracker", getDailyTracker);
+router.get("/me/daily-tracker/notes", getMyDailyTrackerNotes);
 router.patch("/me/daily-tracker", updateDailyTracker);
 router.post("/me/daily-tracker/notes", addDailyTrackerNote);
 router.post("/me/workouts/logs", createWorkoutLog);
