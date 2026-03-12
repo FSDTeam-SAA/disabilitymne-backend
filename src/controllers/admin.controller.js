@@ -7,12 +7,14 @@ import { User } from "../models/user.model.js";
 import { Payment } from "../models/payment.model.js";
 import { SubscriptionPlan } from "../models/subscriptionPlan.model.js";
 import { SupportTicket } from "../models/supportTicket.model.js";
+import { WorkoutExperience } from "../models/workoutExperience.model.js";
 import { PLAN_KEYS, SUBSCRIPTION_PLANS } from "../constants/subscriptionPlans.js";
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
 const SUPPORT_TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
+const WORKOUT_EXPERIENCE_LEVELS = new Set(["easy", "intermediate", "very_hard"]);
 const PROFILE_IMAGE_FIELDS = ["profileImage", "avatar", "image"];
 
 const PLAN_LABELS = {
@@ -101,6 +103,17 @@ const parseBoolean = (value, fieldName) => {
   }
 
   throw new AppError(`${fieldName} must be a boolean.`, httpStatus.BAD_REQUEST);
+};
+
+const parseObjectId = (value, fieldName) => {
+  const id = asString(value);
+  if (!id) return null;
+
+  if (!mongoose.isValidObjectId(id)) {
+    throw new AppError(`${fieldName} must be a valid id.`, httpStatus.BAD_REQUEST);
+  }
+
+  return id;
 };
 
 const normalizePlanKey = (value, required = true) => {
@@ -243,6 +256,15 @@ const normalizeSupportTicketStatus = (value) => {
   return status;
 };
 
+const normalizeWorkoutExperienceLevel = (value) => {
+  const normalized = asString(value).toLowerCase().replace(/\s+/g, "_");
+  if (!WORKOUT_EXPERIENCE_LEVELS.has(normalized)) {
+    throw new AppError("experienceLevel must be one of: easy, intermediate, very_hard.", httpStatus.BAD_REQUEST);
+  }
+
+  return normalized;
+};
+
 const toAdminSupportTicketResponse = (ticket) => ({
   id: ticket._id,
   user: ticket.user && typeof ticket.user === "object"
@@ -261,6 +283,31 @@ const toAdminSupportTicketResponse = (ticket) => ({
   resolvedAt: ticket.resolvedAt || null,
   createdAt: ticket.createdAt,
   updatedAt: ticket.updatedAt,
+});
+
+const toAdminWorkoutExperienceResponse = (experience) => ({
+  id: experience._id,
+  user:
+    experience.user && typeof experience.user === "object"
+      ? {
+        id: experience.user._id,
+        firstName: experience.user.firstName || "",
+        lastName: experience.user.lastName || "",
+        email: experience.user.email || "",
+      }
+      : null,
+  program:
+    experience.program && typeof experience.program === "object"
+      ? {
+        id: experience.program._id,
+        programName: experience.program.programName || "",
+      }
+      : experience.program || null,
+  experienceLevel: experience.experienceLevel,
+  notes: experience.notes || "",
+  completedAt: experience.completedAt,
+  createdAt: experience.createdAt,
+  updatedAt: experience.updatedAt,
 });
 
 const getAdminProfileBodyFromRequest = (req) => {
@@ -519,6 +566,71 @@ export const updateAdminSupportTicket = catchAsync(async (req, res) => {
     success: true,
     message: "Support ticket updated successfully.",
     data: toAdminSupportTicketResponse(ticket),
+  });
+});
+
+export const getAdminWorkoutExperiences = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const filter = {};
+
+  if (req.query.experienceLevel || req.query.difficulty) {
+    filter.experienceLevel = normalizeWorkoutExperienceLevel(req.query.experienceLevel || req.query.difficulty);
+  }
+
+  if (req.query.userId) {
+    filter.user = parseObjectId(req.query.userId, "userId");
+  }
+
+  if (req.query.programId) {
+    filter.program = parseObjectId(req.query.programId, "programId");
+  }
+
+  if (req.query.search) {
+    const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
+    filter.notes = pattern;
+  }
+
+  const [experiences, total] = await Promise.all([
+    WorkoutExperience.find(filter)
+      .sort({ completedAt: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("user", "firstName lastName email")
+      .populate("program", "programName"),
+    WorkoutExperience.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: experiences.map(toAdminWorkoutExperienceResponse),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});
+
+export const getAdminWorkoutExperienceById = catchAsync(async (req, res) => {
+  const { experienceId } = req.params;
+  if (!mongoose.isValidObjectId(experienceId)) {
+    throw new AppError("Invalid workout experience id.", httpStatus.BAD_REQUEST);
+  }
+
+  const experience = await WorkoutExperience.findById(experienceId)
+    .populate("user", "firstName lastName email")
+    .populate("program", "programName");
+
+  if (!experience) {
+    throw new AppError("Workout experience not found.", httpStatus.NOT_FOUND);
+  }
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: toAdminWorkoutExperienceResponse(experience),
   });
 });
 

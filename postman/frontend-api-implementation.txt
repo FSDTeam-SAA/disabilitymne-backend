@@ -1,0 +1,287 @@
+DISABILITYMNE BACKEND - CHANGES ONLY API GUIDE
+(Postman API Names + Frontend Implementation)
+Generated: 2026-03-12
+
+Scope in this file:
+1) Admin exercise global defaults (sets/reps/countdown/weight)
+2) User custom per-exercise override
+3) Program response contract (defaultSets/customSets/effectiveSets)
+4) Workout completion experience + admin feedback inbox
+5) Help & support tickets + admin support inbox
+6) Workout log (per-session actual sets/reps/weight/time)
+
+=====================================================================
+AUTH
+=====================================================================
+- Mobile/User APIs: Authorization: Bearer {{mobileAccessToken}}
+- Admin APIs: Authorization: Bearer {{adminAccessToken}}
+
+
+=====================================================================
+A) ADMIN EXERCISE GLOBAL DEFAULTS (FOR EVERYONE)
+=====================================================================
+
+API Name (Postman): Exercise Management - Create Exercise (Global Defaults)
+Method: POST
+URL: {{baseUrl}}/api/v1/exercises/admin
+Role: Admin
+Implementation:
+- Creates exercise with global training defaults.
+- You can send either:
+  a) Simple fields: sets + reps/countdown + optional weightKg
+  b) Advanced field: defaultSets[]
+- If weight is omitted, backend uses weightKg = 1 by default.
+- Supports multipart/form-data (images/videos).
+
+Body (form-data typical):
+- exerciseName (required)
+- userType: all_user | premium_user
+- assignedUser (required if userType=premium_user)
+- sets, reps, countdown, weightKg (simple mode)
+- OR defaultSets (JSON string array), each item:
+  { setNumber, reps?, durationSeconds or countdown?, weightKg? }
+- description, keyBenefits, muscleGroups
+- exerciseImages (file), targetMuscleImages (file), demoVideo/demoVideos (file)
+- status, isVisibleInLibrary
+
+Response keys:
+- data.defaultSets
+- data.sets, data.reps, data.countdown, data.weightKg
+
+
+API Name (Postman): Exercise Management - Update Exercise (Global Defaults)
+Method: PATCH
+URL: {{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}
+Role: Admin
+Implementation:
+- Updates admin defaults for all users.
+- Users with personal override still see their own custom settings.
+- Same payload rules as create.
+
+
+API Name (Postman): Exercise Management - Exercise Detail
+Method: GET
+URL: {{baseUrl}}/api/v1/exercises/admin/{{exerciseId}}
+Role: Admin
+Implementation:
+- Use this to prefill edit screen.
+- Returns defaultSets and quick summary values.
+
+
+=====================================================================
+B) USER PERSONAL EXERCISE OVERRIDE (PER USER ONLY)
+=====================================================================
+
+API Name (Postman): Exercise Settings Screen - Get Effective Settings
+Method: GET
+URL: {{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings
+Role: Authenticated User
+Implementation:
+- Returns resolved config for this user and exercise.
+- Key response fields:
+  - defaultSets (admin values)
+  - customSets (user override)
+  - effectiveSets (custom if exists, else default)
+  - hasCustomSettings (boolean)
+  - sets/reps/countdown/weightKg (from effective first set)
+
+
+API Name (Postman): Exercise Settings Screen - Save My Custom Settings (User Override)
+Method: PUT
+URL: {{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings
+Role: Authenticated User
+Implementation:
+- Saves override only for current user.
+- Two payload options:
+  1) customSets[] (advanced)
+  2) setCount + reps/countdown + optional weightKg (simple)
+- If weightKg omitted, backend defaults to 1.
+
+Body example (advanced):
+{
+  "customSets": [
+    { "setNumber": 1, "reps": 12, "countdown": 45, "weightKg": 1 },
+    { "setNumber": 2, "reps": 10, "countdown": 40, "weightKg": 1.5 }
+  ]
+}
+
+Body example (simple):
+{
+  "setCount": 3,
+  "reps": 12,
+  "countdown": 45,
+  "weightKg": 1
+}
+
+
+API Name (Postman): Exercise Settings Screen - Reset My Custom Settings (Use Admin Defaults)
+Method: DELETE
+URL: {{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings
+Role: Authenticated User
+Implementation:
+- Deletes user override.
+- Next read uses admin defaultSets.
+
+
+=====================================================================
+C) PROGRAM APIs (USE EFFECTIVE SETS IN WORKOUT PLAYER)
+=====================================================================
+
+API Name (Postman): Programs Screen - All Accessible Programs
+Method: GET
+URL: {{baseUrl}}/api/v1/programs/all?page=1&limit=20
+Role: Authenticated User
+
+API Name (Postman): My Programs Screen - Personalized Programs
+Method: GET
+URL: {{baseUrl}}/api/v1/programs/my?page=1&limit=20
+Role: Premium User
+
+API Name (Postman): Program Details Screen - Program Detail
+Method: GET
+URL: {{baseUrl}}/api/v1/programs/{{programId}}
+Role: Authenticated User
+
+Implementation for frontend:
+- For each exercise, read:
+  - defaultSets (admin)
+  - customSets (user)
+  - effectiveSets (resolved values to render inputs/timer/weight)
+  - hasCustomSettings
+- If user never customized, effectiveSets == defaultSets.
+
+
+=====================================================================
+D) WORKOUT COMPLETION EXPERIENCE (USER -> ADMIN FEEDBACK)
+=====================================================================
+
+API Name (Postman): Workout Completion Screen - Submit Experience
+Method: POST
+URL: {{baseUrl}}/api/v1/users/me/workouts/experiences
+Role: Authenticated User
+Implementation:
+- Call after user completes all exercises in a program.
+- experienceLevel allowed: easy | intermediate | very_hard
+
+Body example:
+{
+  "programId": "{{programId}}",
+  "experienceLevel": "intermediate",
+  "notes": "Good session overall, but last set was hard."
+}
+
+
+API Name (Postman): Workout Completion Screen - List My Experiences
+Method: GET
+URL: {{baseUrl}}/api/v1/users/me/workouts/experiences?page=1&limit=20
+Role: Authenticated User
+
+
+API Name (Postman): Feedback Screen - List Workout Experiences
+Method: GET
+URL: {{baseUrl}}/api/v1/admin/workout-experiences?page=1&limit=20
+Role: Admin
+Filters:
+- experienceLevel, userId, programId, search
+
+
+API Name (Postman): Feedback Screen - Workout Experience Detail
+Method: GET
+URL: {{baseUrl}}/api/v1/admin/workout-experiences/{{workoutExperienceId}}
+Role: Admin
+
+
+=====================================================================
+E) HELP & SUPPORT (USER -> ADMIN SUPPORT INBOX)
+=====================================================================
+
+API Name (Postman): Help & Support Screen - Submit Ticket
+Method: POST
+URL: {{baseUrl}}/api/v1/users/me/support/tickets
+Role: Authenticated User
+Implementation:
+- Required: subject, description
+- email optional in request; backend uses authenticated user email if omitted
+- description max: 300 chars
+
+Body example:
+{
+  "email": "{{mobileEmail}}",
+  "subject": "App navigation issue",
+  "description": "The nutrition update flow needs clarification for portion tracking."
+}
+
+
+API Name (Postman): Help & Support Screen - My Tickets
+Method: GET
+URL: {{baseUrl}}/api/v1/users/me/support/tickets
+Role: Authenticated User
+
+
+API Name (Postman): Support Inbox Screen - List Tickets
+Method: GET
+URL: {{baseUrl}}/api/v1/admin/support/tickets?page=1&limit=20
+Role: Admin
+Filters:
+- status, search
+
+
+API Name (Postman): Support Inbox Screen - Ticket Detail
+Method: GET
+URL: {{baseUrl}}/api/v1/admin/support/tickets/{{supportTicketId}}
+Role: Admin
+
+
+API Name (Postman): Support Inbox Screen - Reply / Resolve Ticket
+Method: PATCH
+URL: {{baseUrl}}/api/v1/admin/support/tickets/{{supportTicketId}}
+Role: Admin
+Body example:
+{
+  "status": "resolved",
+  "adminResponse": "We updated the guidance for the nutrition flow and the team will align the UI copy."
+}
+Allowed status:
+- open | in_progress | resolved | closed
+
+
+=====================================================================
+F) WORKOUT LOG (ACTUAL SESSION DATA)
+=====================================================================
+
+API Name (Postman): Workout Log Screen - Create Workout Entry
+Method: POST
+URL: {{baseUrl}}/api/v1/users/me/workouts/logs
+Role: Authenticated User
+Implementation:
+- Stores actual performed sets for that workout entry.
+- This is log/history data, not admin global exercise defaults.
+
+Body example:
+{
+  "programId": "{{programId}}",
+  "exerciseName": "Seated Dumbbell Press",
+  "sets": [
+    { "setNumber": 1, "reps": 12, "weightKg": 6, "durationSeconds": 45 },
+    { "setNumber": 2, "reps": 10, "weightKg": 6, "durationSeconds": 40 }
+  ],
+  "caloriesBurned": 50,
+  "durationMinutes": 15,
+  "notes": "Felt strong"
+}
+
+
+API Name (Postman): Workout History Screen - List Logged Workouts
+Method: GET
+URL: {{baseUrl}}/api/v1/users/me/workouts/logs?page=1&limit=20
+Role: Authenticated User
+
+
+=====================================================================
+Frontend Flow (Recommended)
+=====================================================================
+1) Load program detail (or programs list) and render exercise.effectiveSets.
+2) If user edits sets/reps/time/weight for an exercise, call PUT settings endpoint.
+3) Reload settings/program to reflect hasCustomSettings + effectiveSets.
+4) On completion screen, submit workout experience.
+5) For help/support screen, submit ticket and show ticket list/status timeline.

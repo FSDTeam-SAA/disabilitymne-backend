@@ -6,11 +6,14 @@ import { isPremiumActiveUser } from "../utils/access.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { User } from "../models/user.model.js";
 import { Program } from "../models/program.model.js";
+import { Exercise } from "../models/exercise.model.js";
 import { Recipe } from "../models/recipe.model.js";
 import { DailyTracker } from "../models/dailyTracker.model.js";
 import { WorkoutLog } from "../models/workoutLog.model.js";
 import { Notification } from "../models/notification.model.js";
 import { SupportTicket } from "../models/supportTicket.model.js";
+import { WorkoutExperience } from "../models/workoutExperience.model.js";
+import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 
 const DEFAULT_TRACKER_HABITS = [
   { key: "follow_diet", title: "Follow a Diet", icon: "apple" },
@@ -32,11 +35,34 @@ const DEFAULT_NOTIFICATION_ITEMS = [
 const RECIPE_TYPES = new Set(["all", "breakfast", "lunch", "dinner", "snack", "meal", "other"]);
 const LANGUAGE_CODES = new Set(["en", "sr"]);
 const ACCESSIBILITY_KEYS = ["largerText", "highContrast", "reducedMotion", "screenReaderOptimized"];
+const WORKOUT_EXPERIENCE_LEVELS = new Set(["easy", "intermediate", "very_hard"]);
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
 };
+
+const parseMaybeJson = (value) => {
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+};
+
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
 const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -99,6 +125,182 @@ const parseObjectId = (value, fieldName) => {
   }
 
   return id;
+};
+
+const normalizeWorkoutExperienceLevel = (value) => {
+  const normalized = asString(value).toLowerCase().replace(/\s+/g, "_");
+  if (!WORKOUT_EXPERIENCE_LEVELS.has(normalized)) {
+    throw new AppError("experienceLevel must be one of: easy, intermediate, very_hard.", httpStatus.BAD_REQUEST);
+  }
+
+  return normalized;
+};
+
+const normalizeSetTemplatesForResponse = (rawSets) =>
+  Array.isArray(rawSets)
+    ? rawSets
+      .filter((set) => set && typeof set === "object")
+      .map((set, index) => ({
+        setNumber: Number.isFinite(Number(set.setNumber)) && Number(set.setNumber) >= 1 ? Math.floor(Number(set.setNumber)) : index + 1,
+        reps: Number.isFinite(Number(set.reps)) ? Number(set.reps) : undefined,
+        durationSeconds: Number.isFinite(Number(set.durationSeconds)) ? Number(set.durationSeconds) : undefined,
+        weightKg: Number.isFinite(Number(set.weightKg)) && Number(set.weightKg) >= 0 ? Number(set.weightKg) : 1,
+      }))
+    : [];
+
+const parseSetTemplates = (rawValue, fieldName = "customSets") => {
+  const value = parseMaybeJson(rawValue);
+  if (value === undefined || value === null || value === "") return [];
+
+  let templates = [];
+  if (Array.isArray(value)) {
+    templates = value;
+  } else if (typeof value === "object") {
+    templates = [value];
+  } else {
+    throw new AppError(`${fieldName} must be an array of sets or a set object.`, httpStatus.BAD_REQUEST);
+  }
+
+  return templates.map((template, index) => {
+    if (!template || typeof template !== "object") {
+      throw new AppError(`${fieldName}[${index}] must be an object.`, httpStatus.BAD_REQUEST);
+    }
+
+    const setNumber = parseNumber(template.setNumber ?? index + 1, `${fieldName}[${index}].setNumber`, 1, true);
+    const reps = parseNumber(template.reps ?? template.targetReps, `${fieldName}[${index}].reps`, 0, false);
+    const durationSeconds = parseNumber(
+      template.durationSeconds ?? template.countdown ?? template.time ?? template.seconds,
+      `${fieldName}[${index}].durationSeconds`,
+      0,
+      false
+    );
+    const weightKg = parseNumber(template.weightKg ?? template.weight, `${fieldName}[${index}].weightKg`, 0, false) ?? 1;
+
+    if (reps === undefined && durationSeconds === undefined) {
+      throw new AppError(
+        `${fieldName}[${index}] must include either reps or durationSeconds/countdown.`,
+        httpStatus.BAD_REQUEST
+      );
+    }
+
+    return {
+      setNumber: Math.floor(setNumber),
+      reps,
+      durationSeconds,
+      weightKg,
+    };
+  });
+};
+
+const buildUniformSetsFromBody = (body) => {
+  const hasSimpleInput =
+    Object.hasOwn(body, "setCount") ||
+    Object.hasOwn(body, "sets") ||
+    Object.hasOwn(body, "reps") ||
+    Object.hasOwn(body, "countdown") ||
+    Object.hasOwn(body, "durationSeconds") ||
+    Object.hasOwn(body, "time") ||
+    Object.hasOwn(body, "seconds") ||
+    Object.hasOwn(body, "weightKg") ||
+    Object.hasOwn(body, "weight");
+
+  if (!hasSimpleInput) {
+    return null;
+  }
+
+  const setsAsJson = parseMaybeJson(body.sets);
+  const setCount = parseNumber(
+    body.setCount ?? (typeof setsAsJson === "number" ? setsAsJson : undefined) ?? 1,
+    "setCount",
+    1,
+    false
+  ) ?? 1;
+  const reps = parseNumber(body.reps, "reps", 0, false);
+  const durationSeconds = parseNumber(
+    body.countdown ?? body.durationSeconds ?? body.time ?? body.seconds,
+    "countdown",
+    0,
+    false
+  );
+  const weightKg = parseNumber(body.weightKg ?? body.weight, "weightKg", 0, false) ?? 1;
+
+  if (reps === undefined && durationSeconds === undefined) {
+    throw new AppError("Provide either reps or countdown/durationSeconds.", httpStatus.BAD_REQUEST);
+  }
+
+  return Array.from({ length: Math.floor(setCount) }, (_, index) => ({
+    setNumber: index + 1,
+    reps,
+    durationSeconds,
+    weightKg,
+  }));
+};
+
+const parseCustomSetsFromBody = (body) => {
+  const customSetsInput = body.customSets ?? body.setTemplates ?? body.defaultSets;
+  if (customSetsInput !== undefined) {
+    return parseSetTemplates(customSetsInput, "customSets");
+  }
+
+  const setsInput = parseMaybeJson(body.sets);
+  if (Array.isArray(setsInput) || (setsInput && typeof setsInput === "object")) {
+    return parseSetTemplates(setsInput, "sets");
+  }
+
+  const uniformSets = buildUniformSetsFromBody(body);
+  if (uniformSets) {
+    return uniformSets;
+  }
+
+  throw new AppError(
+    "Provide customSets (or setCount with reps/countdown) to save exercise settings.",
+    httpStatus.BAD_REQUEST
+  );
+};
+
+const ensureExerciseAccessibleForUser = async (exerciseId, user) => {
+  const exercise = await Exercise.findById(exerciseId).select(
+    "exerciseName userType assignedUser status isActive defaultSets"
+  );
+
+  if (!exercise || !exercise.isActive || exercise.status !== "published") {
+    throw new AppError("Exercise not found.", httpStatus.NOT_FOUND);
+  }
+
+  const isPublicExercise = exercise.userType === "all_user";
+  const isAssignedPremiumExercise =
+    isPremiumActiveUser(user) &&
+    exercise.userType === "premium_user" &&
+    exercise.assignedUser &&
+    exercise.assignedUser.toString() === user._id.toString();
+
+  if (!isPublicExercise && !isAssignedPremiumExercise) {
+    throw new AppError("You are not allowed to access this exercise.", httpStatus.FORBIDDEN);
+  }
+
+  return exercise;
+};
+
+const toExerciseSettingsResponse = (exercise, customSets = []) => {
+  const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
+  const normalizedCustomSets = normalizeSetTemplatesForResponse(customSets);
+  const effectiveSets = normalizedCustomSets.length > 0 ? normalizedCustomSets : defaultSets;
+  const primarySet = effectiveSets[0] || null;
+
+  return {
+    exercise: {
+      id: exercise._id,
+      exerciseName: exercise.exerciseName,
+    },
+    hasCustomSettings: normalizedCustomSets.length > 0,
+    defaultSets,
+    customSets: normalizedCustomSets,
+    effectiveSets,
+    sets: effectiveSets.length,
+    reps: primarySet?.reps ?? null,
+    countdown: primarySet?.durationSeconds ?? null,
+    weightKg: primarySet?.weightKg ?? 1,
+  };
 };
 
 const dateToYmd = (date) => {
@@ -221,6 +423,22 @@ const toSupportTicketResponse = (ticket) => ({
   resolvedAt: ticket.resolvedAt || null,
   createdAt: ticket.createdAt,
   updatedAt: ticket.updatedAt,
+});
+
+const toWorkoutExperienceResponse = (experience) => ({
+  id: experience._id,
+  program:
+    experience.program && typeof experience.program === "object" && experience.program._id
+      ? {
+        id: experience.program._id,
+        programName: experience.program.programName,
+      }
+      : experience.program || null,
+  experienceLevel: experience.experienceLevel,
+  notes: experience.notes || "",
+  completedAt: experience.completedAt,
+  createdAt: experience.createdAt,
+  updatedAt: experience.updatedAt,
 });
 
 const getAccessibilityPreferencesResponse = (user) => ({
@@ -647,6 +865,171 @@ export const getWorkoutLogs = catchAsync(async (req, res) => {
   });
 });
 
+export const getMyExerciseSettings = catchAsync(async (req, res) => {
+  const exerciseId = parseObjectId(req.params.exerciseId, "exerciseId");
+  if (!exerciseId) {
+    throw new AppError("exerciseId is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const exercise = await ensureExerciseAccessibleForUser(exerciseId, req.user);
+  const setting = await UserExerciseSetting.findOne({ user: req.user._id, exercise: exercise._id }).select("customSets");
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: toExerciseSettingsResponse(exercise, setting?.customSets || []),
+  });
+});
+
+export const upsertMyExerciseSettings = catchAsync(async (req, res) => {
+  const exerciseId = parseObjectId(req.params.exerciseId, "exerciseId");
+  if (!exerciseId) {
+    throw new AppError("exerciseId is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const exercise = await ensureExerciseAccessibleForUser(exerciseId, req.user);
+  const shouldReset = Object.hasOwn(req.body || {}, "reset") && parseBoolean(req.body.reset, "reset");
+
+  if (shouldReset) {
+    await UserExerciseSetting.deleteOne({ user: req.user._id, exercise: exercise._id });
+    return res.status(httpStatus.OK).json({
+      success: true,
+      message: "Exercise settings reset to admin defaults.",
+      data: toExerciseSettingsResponse(exercise, []),
+    });
+  }
+
+  const customSets = parseCustomSetsFromBody(req.body || {});
+
+  if (customSets.length === 0) {
+    await UserExerciseSetting.deleteOne({ user: req.user._id, exercise: exercise._id });
+    return res.status(httpStatus.OK).json({
+      success: true,
+      message: "Exercise settings reset to admin defaults.",
+      data: toExerciseSettingsResponse(exercise, []),
+    });
+  }
+
+  const setting = await UserExerciseSetting.findOneAndUpdate(
+    { user: req.user._id, exercise: exercise._id },
+    {
+      $set: {
+        customSets,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  );
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Exercise settings saved successfully.",
+    data: {
+      ...toExerciseSettingsResponse(exercise, setting.customSets),
+      updatedAt: setting.updatedAt,
+    },
+  });
+});
+
+export const resetMyExerciseSettings = catchAsync(async (req, res) => {
+  const exerciseId = parseObjectId(req.params.exerciseId, "exerciseId");
+  if (!exerciseId) {
+    throw new AppError("exerciseId is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const exercise = await ensureExerciseAccessibleForUser(exerciseId, req.user);
+  await UserExerciseSetting.deleteOne({ user: req.user._id, exercise: exercise._id });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Exercise settings reset to admin defaults.",
+    data: toExerciseSettingsResponse(exercise, []),
+  });
+});
+
+export const createWorkoutExperience = catchAsync(async (req, res) => {
+  const programId = parseObjectId(req.body.programId, "programId");
+  if (!programId) {
+    throw new AppError("programId is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const program = await Program.findOne({
+    _id: programId,
+    ...buildProgramAccessFilter(req.user),
+  }).select("_id programName");
+
+  if (!program) {
+    throw new AppError("Program not found or not accessible.", httpStatus.NOT_FOUND);
+  }
+
+  const experienceLevel = normalizeWorkoutExperienceLevel(req.body.experienceLevel || req.body.difficulty);
+  const notes = asString(req.body.notes || req.body.note);
+  if (notes.length > 500) {
+    throw new AppError("notes should not exceed 500 characters.", httpStatus.BAD_REQUEST);
+  }
+
+  const completedAt = req.body.completedAt ? parseDate(req.body.completedAt, "completedAt") : new Date();
+
+  const workoutExperience = await WorkoutExperience.create({
+    user: req.user._id,
+    program: program._id,
+    experienceLevel,
+    notes,
+    completedAt,
+  });
+
+  const populated = await WorkoutExperience.findById(workoutExperience._id).populate("program", "programName");
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Workout experience submitted successfully.",
+    data: toWorkoutExperienceResponse(populated),
+  });
+});
+
+export const getMyWorkoutExperiences = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+
+  const filter = { user: req.user._id };
+
+  if (req.query.experienceLevel || req.query.difficulty) {
+    filter.experienceLevel = normalizeWorkoutExperienceLevel(req.query.experienceLevel || req.query.difficulty);
+  }
+
+  if (req.query.programId) {
+    filter.program = parseObjectId(req.query.programId, "programId");
+  }
+
+  if (req.query.search) {
+    const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
+    filter.notes = pattern;
+  }
+
+  const [experiences, total] = await Promise.all([
+    WorkoutExperience.find(filter)
+      .sort({ completedAt: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("program", "programName"),
+    WorkoutExperience.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: experiences.map(toWorkoutExperienceResponse),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});
+
 export const getProgressOverview = catchAsync(async (req, res) => {
   const totalWorkouts = await WorkoutLog.countDocuments({ user: req.user._id });
 
@@ -880,12 +1263,17 @@ export const updateAccessibilityPreferences = catchAsync(async (req, res) => {
 });
 
 export const createSupportTicket = catchAsync(async (req, res) => {
-  const email = asString(req.user?.email).toLowerCase();
+  const bodyEmail = asString(req.body.email || req.body.userEmail).toLowerCase();
+  const email = bodyEmail || asString(req.user?.email).toLowerCase();
   const subject = asString(req.body.subject);
   const description = asString(req.body.description);
 
   if (!email) {
     throw new AppError("Authenticated user email is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!isValidEmail(email)) {
+    throw new AppError("A valid email is required.", httpStatus.BAD_REQUEST);
   }
 
   if (!subject || !description) {

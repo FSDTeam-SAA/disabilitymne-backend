@@ -734,6 +734,141 @@
           }
         },
         {
+          "name": "Exercise Settings Screen - Get Effective Settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Get resolved config for one exercise for the current user. Response includes defaultSets, customSets, effectiveSets, hasCustomSettings."
+          }
+        },
+        {
+          "name": "Exercise Settings Screen - Save My Custom Settings (User Override)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customSets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"countdown\": 45,\n      \"weightKg\": 1\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"countdown\": 40,\n      \"weightKg\": 1.5\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Save per-user override for one exercise. Use either customSets[] (advanced) OR simple fields (setCount + reps/countdown + weightKg). weightKg defaults to 1 when omitted."
+          }
+        },
+        {
+          "name": "Exercise Settings Screen - Reset My Custom Settings (Use Admin Defaults)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Deletes user override for this exercise. Next fetch will use admin defaultSets."
+          }
+        },
+        {
+          "name": "Workout Completion Screen - Submit Experience",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/users/me/workouts/experiences",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"programId\": \"{{programId}}\",\n  \"experienceLevel\": \"intermediate\",\n  \"notes\": \"Good session overall, but last set was hard.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.id || data?.data?._id;",
+                  "if (value) pm.collectionVariables.set('workoutExperienceId', value);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Workout Completion Screen - List My Experiences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/users/me/workouts/experiences?page=1&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
           "name": "Notifications Screen - List Notifications",
           "request": {
             "method": "GET",
@@ -815,7 +950,8 @@
             }
           }
         }
-      ]
+      ],
+      "description": "Frontend flow note: for workout execution UI use exercise settings endpoints and program detail effective sets. Program detail now returns per exercise: defaultSets (admin), customSets (user), effectiveSets (resolved), hasCustomSettings."
     },
     {
       "name": "Mobile App - Nutrition Screens",
@@ -1112,7 +1248,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Returns accessible programs. For each exercise, frontend should read effectiveSets for runtime values. If user has no override, effectiveSets == defaultSets."
           },
           "event": [
             {
@@ -1128,7 +1265,10 @@
                   "pm.expect(Array.isArray(program.exercises)).to.eql(true);",
                   "if (program.exerciseIds[0]) pm.expect(program.exerciseIds[0]).to.be.a('string');",
                   "if (program.programImage) pm.expect(program.programImage).to.be.a('string');",
-                  "if (program.programThumbnail) pm.expect(program.programThumbnail).to.be.a('string');"
+                  "if (program.programThumbnail) pm.expect(program.programThumbnail).to.be.a('string');",
+                  "const firstExercise = Array.isArray(program.exercises) ? program.exercises[0] : null;",
+                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.defaultSets)).to.eql(true);",
+                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.effectiveSets)).to.eql(true);"
                 ]
               }
             }
@@ -1149,7 +1289,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Primary endpoint for workout player. Use exercise.effectiveSets for UI inputs/timers/weights. defaultSets are admin defaults; customSets are user overrides."
           },
           "event": [
             {
@@ -1165,7 +1306,12 @@
                   "pm.expect(Array.isArray(program.exercises)).to.eql(true);",
                   "if (program.exerciseIds[0]) pm.expect(program.exerciseIds[0]).to.be.a('string');",
                   "if (program.exercises[0]?.demoVideo) pm.expect(program.exercises[0].demoVideo).to.be.a('string');",
-                  "if (program.programImage) pm.expect(program.programImage).to.be.a('string');"
+                  "if (program.programImage) pm.expect(program.programImage).to.be.a('string');",
+                  "const firstExercise = Array.isArray(program.exercises) ? program.exercises[0] : null;",
+                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.defaultSets)).to.eql(true);",
+                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.customSets)).to.eql(true);",
+                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.effectiveSets)).to.eql(true);",
+                  "if (firstExercise?.effectiveSets?.[0]?.weightKg !== undefined) pm.expect(firstExercise.effectiveSets[0].weightKg).to.be.a('number');"
                 ]
               }
             }
@@ -1312,10 +1458,12 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Returns exercise metadata including admin defaultSets and quick summary fields (sets/reps/countdown/weightKg)."
           }
         }
-      ]
+      ],
+      "description": "Program/exercise contract: exercise blocks include defaultSets from admin and effectiveSets after applying user-specific override (if any)."
     },
     {
       "name": "Mobile App - Chat, Support & Billing Screens",
@@ -1507,13 +1655,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"subject\": \"App navigation issue\",\n  \"description\": \"The nutrition update flow needs clarification for portion tracking.\"\n}",
+              "raw": "{\n  \"email\": \"{{mobileEmail}}\",\n  \"subject\": \"App navigation issue\",\n  \"description\": \"The nutrition update flow needs clarification for portion tracking.\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Creates support ticket from mobile app. Body supports email + subject + description. If email is omitted, backend falls back to authenticated user email."
           },
           "event": [
             {
@@ -1868,6 +2017,44 @@
                 }
               }
             }
+          }
+        },
+        {
+          "name": "Feedback Screen - List Workout Experiences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/workout-experiences?page=1&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Admin feedback inbox for completed program experiences. Supports query filters: page, limit, experienceLevel, userId, programId, search."
+          }
+        },
+        {
+          "name": "Feedback Screen - Workout Experience Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/admin/workout-experiences/{{workoutExperienceId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{adminAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Fetch single workout experience item for admin review."
           }
         }
       ]
@@ -2402,7 +2589,7 @@
           }
         },
         {
-          "name": "Exercise Management - Create Exercise",
+          "name": "Exercise Management - Create Exercise (Global Defaults)",
           "request": {
             "method": "POST",
             "header": [],
@@ -2429,6 +2616,21 @@
                   "key": "userType",
                   "type": "text",
                   "value": "all_user"
+                },
+                {
+                  "key": "sets",
+                  "type": "text",
+                  "value": "4"
+                },
+                {
+                  "key": "reps",
+                  "type": "text",
+                  "value": "12"
+                },
+                {
+                  "key": "countdown",
+                  "type": "text",
+                  "value": "45"
                 },
                 {
                   "key": "description",
@@ -2481,7 +2683,8 @@
                   "src": ""
                 }
               ]
-            }
+            },
+            "description": "Admin creates exercise and global defaults for everyone. Send either simple fields (sets/reps/countdown) or defaultSets JSON array. User-specific customization is handled in user settings routes."
           },
           "event": [
             {
@@ -2517,7 +2720,7 @@
           }
         },
         {
-          "name": "Exercise Management - Update Exercise",
+          "name": "Exercise Management - Update Exercise (Global Defaults)",
           "request": {
             "method": "PATCH",
             "header": [],
@@ -2539,6 +2742,21 @@
                   "key": "exerciseName",
                   "type": "text",
                   "value": "Chest Press Machines Updated"
+                },
+                {
+                  "key": "sets",
+                  "type": "text",
+                  "value": "3"
+                },
+                {
+                  "key": "reps",
+                  "type": "text",
+                  "value": "10"
+                },
+                {
+                  "key": "countdown",
+                  "type": "text",
+                  "value": "40"
                 },
                 {
                   "key": "status",
@@ -2566,7 +2784,8 @@
                   "src": ""
                 }
               ]
-            }
+            },
+            "description": "Admin updates exercise and global default training values. Changes affect all users unless user has personal override for that exercise."
           }
         },
         {
@@ -2619,7 +2838,8 @@
             }
           }
         }
-      ]
+      ],
+      "description": "Admin defines global defaults (sets/reps/countdown/weight) for each exercise. Users may override these values only for themselves via user exercise settings routes."
     },
     {
       "name": "Admin Dashboard - Subscription Plan Screens",
@@ -3074,6 +3294,10 @@
     },
     {
       "key": "supportTicketId",
+      "value": ""
+    },
+    {
+      "key": "workoutExperienceId",
       "value": ""
     },
     {

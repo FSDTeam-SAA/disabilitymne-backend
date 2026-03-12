@@ -51,6 +51,22 @@ const asString = (value) => {
 
 const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const parseNumber = (value, fieldName, min = 0, required = false) => {
+  if (value === undefined || value === null || value === "") {
+    if (required) {
+      throw new AppError(`${fieldName} is required.`, httpStatus.BAD_REQUEST);
+    }
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    throw new AppError(`${fieldName} must be a number >= ${min}.`, httpStatus.BAD_REQUEST);
+  }
+
+  return parsed;
+};
+
 const parseObjectId = (value, fieldName) => {
   const id = asString(value);
   if (!id) return null;
@@ -166,6 +182,107 @@ const normalizeStringList = (rawValue) => {
   return [];
 };
 
+const normalizeSetTemplates = (rawValue, fieldName = "defaultSets") => {
+  const value = parseMaybeJson(rawValue);
+  if (value === undefined || value === null || value === "") return [];
+
+  let templates = [];
+  if (Array.isArray(value)) {
+    templates = value;
+  } else if (typeof value === "object") {
+    templates = [value];
+  } else {
+    throw new AppError(`${fieldName} must be an array of sets or a set object.`, httpStatus.BAD_REQUEST);
+  }
+
+  return templates.map((template, index) => {
+    if (!template || typeof template !== "object") {
+      throw new AppError(`${fieldName}[${index}] must be an object.`, httpStatus.BAD_REQUEST);
+    }
+
+    const setNumber = parseNumber(template.setNumber ?? index + 1, `${fieldName}[${index}].setNumber`, 1, true);
+    const reps = parseNumber(template.reps ?? template.targetReps, `${fieldName}[${index}].reps`, 0, false);
+    const durationSeconds = parseNumber(
+      template.durationSeconds ?? template.countdown ?? template.time ?? template.seconds,
+      `${fieldName}[${index}].durationSeconds`,
+      0,
+      false
+    );
+    const weightKg = parseNumber(template.weightKg ?? template.weight, `${fieldName}[${index}].weightKg`, 0, false) ?? 1;
+
+    if (reps === undefined && durationSeconds === undefined) {
+      throw new AppError(
+        `${fieldName}[${index}] must include either reps or durationSeconds/countdown.`,
+        httpStatus.BAD_REQUEST
+      );
+    }
+
+    return {
+      setNumber: Math.floor(setNumber),
+      reps,
+      durationSeconds,
+      weightKg,
+    };
+  });
+};
+
+const parseDefaultSetsFromBody = (body) => {
+  const defaultSetsInput = getField(body, ["defaultSets", "setTemplates", "exerciseSets"]);
+  const setCountInput = getField(body, ["sets", "setCount", "totalSets"]);
+  const repsInput = getField(body, ["reps", "targetReps"]);
+  const countdownInput = getField(body, ["countdown", "durationSeconds", "time", "seconds"]);
+  const weightInput = getField(body, ["weightKg", "weight"]);
+
+  const hasValue = (input) => input !== undefined && input !== null && input !== "";
+  const hasAnyInput =
+    hasValue(defaultSetsInput.value) ||
+    hasValue(setCountInput.value) ||
+    hasValue(repsInput.value) ||
+    hasValue(countdownInput.value) ||
+    hasValue(weightInput.value);
+
+  if (!hasAnyInput) {
+    return { provided: false, value: undefined };
+  }
+
+  if (defaultSetsInput.provided) {
+    return {
+      provided: true,
+      value: normalizeSetTemplates(defaultSetsInput.value, "defaultSets"),
+    };
+  }
+
+  const setCount = parseNumber(setCountInput.value ?? 1, "sets", 1, false) ?? 1;
+  const reps = parseNumber(repsInput.value, "reps", 0, false);
+  const durationSeconds = parseNumber(countdownInput.value, "countdown", 0, false);
+  const weightKg = parseNumber(weightInput.value, "weightKg", 0, false) ?? 1;
+
+  if (reps === undefined && durationSeconds === undefined) {
+    throw new AppError("Provide either reps or countdown/durationSeconds.", httpStatus.BAD_REQUEST);
+  }
+
+  const defaultSets = Array.from({ length: Math.floor(setCount) }, (_, index) => ({
+    setNumber: index + 1,
+    reps,
+    durationSeconds,
+    weightKg,
+  }));
+
+  return { provided: true, value: defaultSets };
+};
+
+const normalizeDefaultSetsForResponse = (rawSets) =>
+  Array.isArray(rawSets)
+    ? rawSets
+      .filter((set) => set && typeof set === "object")
+      .map((set, index) => ({
+        setNumber: Number.isFinite(Number(set.setNumber)) && Number(set.setNumber) >= 1 ? Math.floor(Number(set.setNumber)) : index + 1,
+        reps: Number.isFinite(Number(set.reps)) ? Number(set.reps) : undefined,
+        durationSeconds: Number.isFinite(Number(set.durationSeconds)) ? Number(set.durationSeconds) : undefined,
+        weightKg: Number.isFinite(Number(set.weightKg)) && Number(set.weightKg) >= 0 ? Number(set.weightKg) : 1,
+      }))
+    : [];
+
 const buildPagination = (page, limit, total) => ({
   page,
   limit,
@@ -220,29 +337,39 @@ const toAssignedUser = (assignedUser) => {
   return assignedUser || null;
 };
 
-const buildExerciseSummary = (exercise, programNames = []) => ({
-  id: exercise._id,
-  exerciseName: exercise.exerciseName,
-  userType: exercise.userType,
-  plan: exercise.userType,
-  assignedUser: toAssignedUser(exercise.assignedUser),
-  description: exercise.description,
-  keyBenefits: exercise.keyBenefits || [],
-  muscleGroups: exercise.muscleGroups || [],
-  exerciseImage: toMediaUrl(exercise.exerciseImages?.[0]),
-  demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
-  targetMuscleImage: toMediaUrl(exercise.targetMuscleImages?.[0]),
-  exerciseImages: toMediaUrlList(exercise.exerciseImages),
-  targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
-  demoVideos: toMediaUrlList(exercise.demoVideos),
-  isVisibleInLibrary: exercise.isVisibleInLibrary,
-  status: exercise.status,
-  isActive: exercise.isActive,
-  programNames,
-  programCount: programNames.length,
-  createdAt: exercise.createdAt,
-  updatedAt: exercise.updatedAt,
-});
+const buildExerciseSummary = (exercise, programNames = []) => {
+  const defaultSets = normalizeDefaultSetsForResponse(exercise.defaultSets);
+  const primarySet = defaultSets[0] || null;
+
+  return {
+    id: exercise._id,
+    exerciseName: exercise.exerciseName,
+    userType: exercise.userType,
+    plan: exercise.userType,
+    assignedUser: toAssignedUser(exercise.assignedUser),
+    description: exercise.description,
+    keyBenefits: exercise.keyBenefits || [],
+    muscleGroups: exercise.muscleGroups || [],
+    exerciseImage: toMediaUrl(exercise.exerciseImages?.[0]),
+    demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
+    targetMuscleImage: toMediaUrl(exercise.targetMuscleImages?.[0]),
+    exerciseImages: toMediaUrlList(exercise.exerciseImages),
+    targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
+    demoVideos: toMediaUrlList(exercise.demoVideos),
+    defaultSets,
+    sets: defaultSets.length,
+    reps: primarySet?.reps ?? null,
+    countdown: primarySet?.durationSeconds ?? null,
+    weightKg: primarySet?.weightKg ?? 1,
+    isVisibleInLibrary: exercise.isVisibleInLibrary,
+    status: exercise.status,
+    isActive: exercise.isActive,
+    programNames,
+    programCount: programNames.length,
+    createdAt: exercise.createdAt,
+    updatedAt: exercise.updatedAt,
+  };
+};
 
 const buildExerciseDetails = (exercise, programNames = []) => buildExerciseSummary(exercise, programNames);
 
@@ -299,6 +426,7 @@ const buildCreatePayload = async (body) => {
   const demoVideos = normalizeMediaList(
     getField(parsedBody, DEMO_VIDEO_FIELDS).value
   );
+  const defaultSetsInput = parseDefaultSetsFromBody(parsedBody);
   const status = normalizeExerciseStatus(getField(parsedBody, ["status"]).value || "published");
   const isVisibleInLibrary = parseBoolean(
     getField(parsedBody, ["isVisibleInLibrary", "visibleInLibrary", "isVisible"]).value,
@@ -330,6 +458,7 @@ const buildCreatePayload = async (body) => {
     exerciseImages,
     targetMuscleImages,
     demoVideos,
+    defaultSets: defaultSetsInput.value || [],
     status,
     isVisibleInLibrary: isVisibleInLibrary ?? true,
     isActive: status !== "archived",
@@ -388,6 +517,11 @@ const buildUpdatePayload = async (body, currentExercise) => {
       throw new AppError("At least one exercise demo video is required.", httpStatus.BAD_REQUEST);
     }
     updates.demoVideos = demoVideos;
+  }
+
+  const defaultSetsInput = parseDefaultSetsFromBody(parsedBody);
+  if (defaultSetsInput.provided) {
+    updates.defaultSets = defaultSetsInput.value;
   }
 
   const userTypeInput = getField(parsedBody, ["userType", "plan"]);

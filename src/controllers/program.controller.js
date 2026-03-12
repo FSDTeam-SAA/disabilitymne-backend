@@ -7,6 +7,7 @@ import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
+import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 import { User } from "../models/user.model.js";
 
 const PROGRAM_LEVELS = new Set(["beginner", "intermediate", "advanced"]);
@@ -392,33 +393,54 @@ const toIdString = (value) => {
   return null;
 };
 
+const normalizeSetTemplatesForResponse = (rawSets) =>
+  Array.isArray(rawSets)
+    ? rawSets
+      .filter((set) => set && typeof set === "object")
+      .map((set, index) => ({
+        setNumber: Number.isFinite(Number(set.setNumber)) && Number(set.setNumber) >= 1 ? Math.floor(Number(set.setNumber)) : index + 1,
+        reps: Number.isFinite(Number(set.reps)) ? Number(set.reps) : undefined,
+        durationSeconds: Number.isFinite(Number(set.durationSeconds)) ? Number(set.durationSeconds) : undefined,
+        weightKg: Number.isFinite(Number(set.weightKg)) && Number(set.weightKg) >= 0 ? Number(set.weightKg) : 1,
+      }))
+    : [];
+
 const isPopulatedExerciseRef = (exerciseRef) =>
   Boolean(exerciseRef && typeof exerciseRef === "object" && "exerciseName" in exerciseRef);
 
-const mapExerciseFromLibrary = (exercise, index) => ({
-  id: toIdString(exercise._id),
-  exerciseName: exercise.exerciseName,
-  name: exercise.exerciseName,
-  order: index + 1,
-  userType: exercise.userType,
-  plan: exercise.userType,
-  assignedUser: toAssignedUser(exercise.assignedUser),
-  description: exercise.description || "",
-  keyBenefits: exercise.keyBenefits || [],
-  muscleGroups: exercise.muscleGroups || [],
-  exerciseImages: toMediaUrlList(exercise.exerciseImages),
-  image: toMediaUrl(exercise.exerciseImages?.[0]),
-  targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
-  targetMuscleImage: toMediaUrl(exercise.targetMuscleImages?.[0]),
-  demoVideos: toMediaUrlList(exercise.demoVideos),
-  demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
-  defaultSets: [],
-  durationSeconds: null,
-  calories: null,
-  isVisibleInLibrary: exercise.isVisibleInLibrary,
-  status: exercise.status,
-  isActive: exercise.isActive,
-});
+const mapExerciseFromLibrary = (exercise, index) => {
+  const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
+  const primarySet = defaultSets[0] || null;
+
+  return {
+    id: toIdString(exercise._id),
+    exerciseName: exercise.exerciseName,
+    name: exercise.exerciseName,
+    order: index + 1,
+    userType: exercise.userType,
+    plan: exercise.userType,
+    assignedUser: toAssignedUser(exercise.assignedUser),
+    description: exercise.description || "",
+    keyBenefits: exercise.keyBenefits || [],
+    muscleGroups: exercise.muscleGroups || [],
+    exerciseImages: toMediaUrlList(exercise.exerciseImages),
+    image: toMediaUrl(exercise.exerciseImages?.[0]),
+    targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
+    targetMuscleImage: toMediaUrl(exercise.targetMuscleImages?.[0]),
+    demoVideos: toMediaUrlList(exercise.demoVideos),
+    demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
+    defaultSets,
+    sets: defaultSets.length,
+    reps: primarySet?.reps ?? null,
+    countdown: primarySet?.durationSeconds ?? null,
+    weightKg: primarySet?.weightKg ?? 1,
+    durationSeconds: primarySet?.durationSeconds ?? null,
+    calories: null,
+    isVisibleInLibrary: exercise.isVisibleInLibrary,
+    status: exercise.status,
+    isActive: exercise.isActive,
+  };
+};
 
 const mapLegacyExercise = (exercise) => {
   const demoVideos =
@@ -436,6 +458,8 @@ const mapLegacyExercise = (exercise) => {
         : [];
 
   const targetMuscleImages = Array.isArray(exercise.targetMuscleImages) ? exercise.targetMuscleImages : [];
+  const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
+  const primarySet = defaultSets[0] || null;
 
   return {
     id: toIdString(exercise._id),
@@ -450,8 +474,12 @@ const mapLegacyExercise = (exercise) => {
     image: toMediaUrl(exerciseImages[0]),
     targetMuscleImages: toMediaUrlList(targetMuscleImages),
     targetMuscleImage: toMediaUrl(targetMuscleImages[0]),
-    defaultSets: exercise.defaultSets || [],
-    durationSeconds: exercise.durationSeconds ?? null,
+    defaultSets,
+    sets: defaultSets.length,
+    reps: primarySet?.reps ?? null,
+    countdown: primarySet?.durationSeconds ?? null,
+    weightKg: primarySet?.weightKg ?? 1,
+    durationSeconds: primarySet?.durationSeconds ?? exercise.durationSeconds ?? null,
     calories: exercise.calories ?? null,
   };
 };
@@ -508,6 +536,70 @@ const buildProgramSummary = (program) => {
 };
 
 const buildProgramDetails = (program) => buildProgramSummary(program);
+
+const buildUserExerciseSettingsMap = async (userId, programs) => {
+  const exerciseIds = [];
+
+  for (const program of programs || []) {
+    if (!program || !Array.isArray(program.exerciseRefs)) continue;
+
+    for (const exerciseRef of program.exerciseRefs) {
+      const exerciseId = toIdString(exerciseRef);
+      if (exerciseId) {
+        exerciseIds.push(exerciseId);
+      }
+    }
+  }
+
+  const uniqueIds = [...new Set(exerciseIds)];
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  const userSettings = await UserExerciseSetting.find({
+    user: userId,
+    exercise: { $in: uniqueIds },
+  }).select("exercise customSets");
+
+  return new Map(
+    userSettings.map((setting) => [
+      setting.exercise.toString(),
+      normalizeSetTemplatesForResponse(setting.customSets),
+    ])
+  );
+};
+
+const withEffectiveExerciseSets = (exercise, userSettingsMap) => {
+  const exerciseId = toIdString(exercise.id);
+  const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
+  const customSets = exerciseId ? userSettingsMap.get(exerciseId) || [] : [];
+  const effectiveSets = customSets.length > 0 ? customSets : defaultSets;
+  const primarySet = effectiveSets[0] || null;
+
+  return {
+    ...exercise,
+    defaultSets,
+    customSets,
+    effectiveSets,
+    hasCustomSettings: customSets.length > 0,
+    sets: effectiveSets.length,
+    reps: primarySet?.reps ?? null,
+    countdown: primarySet?.durationSeconds ?? null,
+    weightKg: primarySet?.weightKg ?? 1,
+    durationSeconds: primarySet?.durationSeconds ?? exercise.durationSeconds ?? null,
+  };
+};
+
+const buildProgramSummaryForUser = (program, userSettingsMap) => {
+  const summary = buildProgramSummary(program);
+
+  return {
+    ...summary,
+    exercises: Array.isArray(summary.exercises)
+      ? summary.exercises.map((exercise) => withEffectiveExerciseSets(exercise, userSettingsMap))
+      : [],
+  };
+};
 
 const buildCreatePayload = async (body) => {
   const parsedBody = body || {};
@@ -757,7 +849,7 @@ const populateProgramQuery = (query) =>
     .populate("assignedUser", "firstName email")
     .populate({
       path: "exerciseRefs",
-      select: "exerciseName userType assignedUser description keyBenefits muscleGroups exerciseImages targetMuscleImages demoVideos isVisibleInLibrary status isActive",
+      select: "exerciseName userType assignedUser description keyBenefits muscleGroups exerciseImages targetMuscleImages demoVideos defaultSets isVisibleInLibrary status isActive",
       populate: {
         path: "assignedUser",
         select: "firstName email",
@@ -967,10 +1059,11 @@ export const getExplorePrograms = catchAsync(async (req, res) => {
     populateProgramQuery(Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)),
     Program.countDocuments(filter),
   ]);
+  const userSettingsMap = await buildUserExerciseSettingsMap(req.user._id, programs);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: programs.map(buildProgramSummary),
+    data: programs.map((program) => buildProgramSummaryForUser(program, userSettingsMap)),
     meta: buildPagination(page, limit, total),
   });
 });
@@ -1000,10 +1093,11 @@ export const getMyPrograms = catchAsync(async (req, res) => {
     populateProgramQuery(Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)),
     Program.countDocuments(filter),
   ]);
+  const userSettingsMap = await buildUserExerciseSettingsMap(req.user._id, programs);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: programs.map(buildProgramSummary),
+    data: programs.map((program) => buildProgramSummaryForUser(program, userSettingsMap)),
     meta: buildPagination(page, limit, total),
   });
 });
@@ -1042,9 +1136,11 @@ export const getProgramByIdForUser = catchAsync(async (req, res) => {
     throw new AppError("You are not allowed to access this program.", httpStatus.FORBIDDEN);
   }
 
+  const userSettingsMap = await buildUserExerciseSettingsMap(req.user._id, [program]);
+
   return res.status(httpStatus.OK).json({
     success: true,
-    data: buildProgramDetails(program),
+    data: buildProgramSummaryForUser(program, userSettingsMap),
   });
 });
 
@@ -1063,10 +1159,11 @@ export const getAllAccessiblePrograms = catchAsync(async (req, res) => {
     populateProgramQuery(Program.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)),
     Program.countDocuments(filter),
   ]);
+  const userSettingsMap = await buildUserExerciseSettingsMap(req.user._id, programs);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: programs.map(buildProgramSummary),
+    data: programs.map((program) => buildProgramSummaryForUser(program, userSettingsMap)),
     meta: buildPagination(page, limit, total),
   });
 });
