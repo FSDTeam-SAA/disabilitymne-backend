@@ -6,19 +6,24 @@ import {
   addDailyTrackerNote,
   changeMyPassword,
   createSupportTicket,
+  createWorkoutExperience,
   createWorkoutLog,
   getDailyTracker,
   getAccessibilityPreferences,
   getHomeOverview,
   getLanguagePreference,
   getMyDailyTrackerNotes,
+  getMyExerciseSettings,
   getMyPublicProfile,
   getMySupportTickets,
+  getMyWorkoutExperiences,
   getNotificationList,
   getProgressOverview,
   getWorkoutLogs,
   markAllNotificationsRead,
   markNotificationRead,
+  resetMyExerciseSettings,
+  upsertMyExerciseSettings,
   updateDailyTracker,
   updateAccessibilityPreferences,
   updateLanguagePreference,
@@ -46,6 +51,11 @@ router.patch("/me/daily-tracker", updateDailyTracker);
 router.post("/me/daily-tracker/notes", addDailyTrackerNote);
 router.post("/me/workouts/logs", createWorkoutLog);
 router.get("/me/workouts/logs", getWorkoutLogs);
+router.get("/me/exercises/:exerciseId/settings", getMyExerciseSettings);
+router.put("/me/exercises/:exerciseId/settings", upsertMyExerciseSettings);
+router.delete("/me/exercises/:exerciseId/settings", resetMyExerciseSettings);
+router.post("/me/workouts/experiences", createWorkoutExperience);
+router.get("/me/workouts/experiences", getMyWorkoutExperiences);
 router.get("/me/notifications", getNotificationList);
 router.patch("/me/notifications/read-all", markAllNotificationsRead);
 router.patch("/me/notifications/:notificationId/read", markNotificationRead);

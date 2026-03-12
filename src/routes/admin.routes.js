@@ -10,6 +10,8 @@ import {
   getAdminSupportTickets,
   getAdminSubscriptionPlans,
   getAdminUsers,
+  getAdminWorkoutExperienceById,
+  getAdminWorkoutExperiences,
   getDashboardOverview,
   updateAdminSupportTicket,
   updateAdminSettingsPassword,
@@ -35,6 +37,8 @@ router.delete("/users/:userId", deleteAdminUser);
 router.get("/support/tickets", getAdminSupportTickets);
 router.get("/support/tickets/:ticketId", getAdminSupportTicketById);
 router.patch("/support/tickets/:ticketId", updateAdminSupportTicket);
+router.get("/workout-experiences", getAdminWorkoutExperiences);
+router.get("/workout-experiences/:experienceId", getAdminWorkoutExperienceById);
 
 router.get("/settings/profile", getAdminSettingsProfile);
 router.patch("/settings/profile", uploadAdminProfileImage, updateAdminSettingsProfile);

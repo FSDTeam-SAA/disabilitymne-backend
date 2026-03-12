@@ -13,6 +13,16 @@ const mediaAssetSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const defaultSetSchema = new mongoose.Schema(
+  {
+    setNumber: { type: Number, min: 1, required: true },
+    reps: { type: Number, min: 0 },
+    durationSeconds: { type: Number, min: 0 },
+    weightKg: { type: Number, min: 0, default: 1 },
+  },
+  { _id: false }
+);
+
 const normalizeStringArray = (input) => {
   if (!Array.isArray(input)) {
     return [];
@@ -71,6 +81,10 @@ const exerciseSchema = new mongoose.Schema(
       type: [mediaAssetSchema],
       default: [],
     },
+    defaultSets: {
+      type: [defaultSetSchema],
+      default: [],
+    },
     isVisibleInLibrary: {
       type: Boolean,
       default: true,
@@ -110,6 +124,20 @@ exerciseSchema.pre("validate", function preValidate(next) {
   this.exerciseImages = Array.isArray(this.exerciseImages) ? this.exerciseImages.filter(Boolean) : [];
   this.targetMuscleImages = Array.isArray(this.targetMuscleImages) ? this.targetMuscleImages.filter(Boolean) : [];
   this.demoVideos = Array.isArray(this.demoVideos) ? this.demoVideos.filter(Boolean) : [];
+  this.defaultSets = Array.isArray(this.defaultSets)
+    ? this.defaultSets
+      .filter((set) => set && typeof set === "object")
+      .map((set, index) => {
+        const parsedSetNumber = Number(set.setNumber);
+        const parsedWeight = Number(set.weightKg);
+
+        return {
+          ...set,
+          setNumber: Number.isFinite(parsedSetNumber) && parsedSetNumber >= 1 ? Math.floor(parsedSetNumber) : index + 1,
+          weightKg: Number.isFinite(parsedWeight) && parsedWeight >= 0 ? parsedWeight : 1,
+        };
+      })
+    : [];
 
   if (this.userType === "all_user") {
     this.assignedUser = null;

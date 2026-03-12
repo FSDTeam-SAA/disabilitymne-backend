@@ -61,6 +61,8 @@ These endpoints now expect `multipart/form-data` when you want to upload images 
   - image field: `recipeImages`
 - `POST|PATCH /api/v1/exercises/admin`
   - media fields: `exerciseImages`, `targetMuscleImages`, `demoVideo`/`demoVideos`
+  - training defaults: either `defaultSets` (array of `{ setNumber, reps, durationSeconds/countdown, weightKg }`)
+    or simple fields `sets`, `reps`, `countdown` (weight defaults to `1kg`)
 
 Notes:
 - Include optional `folder` in form-data if you want a custom Cloudinary folder.
@@ -93,6 +95,11 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 - `POST /api/v1/users/me/daily-tracker/notes`
 - `POST /api/v1/users/me/workouts/logs` (log completed exercise/workout sets)
 - `GET /api/v1/users/me/workouts/logs`
+- `GET /api/v1/users/me/exercises/:exerciseId/settings` (effective exercise sets config for current user)
+- `PUT /api/v1/users/me/exercises/:exerciseId/settings` (save user-specific exercise sets/reps/countdown/weight)
+- `DELETE /api/v1/users/me/exercises/:exerciseId/settings` (reset to admin defaults)
+- `POST /api/v1/users/me/workouts/experiences` (workout completion feedback: `experienceLevel` + optional `notes`)
+- `GET /api/v1/users/me/workouts/experiences`
 - `GET /api/v1/users/me/notifications`
 - `PATCH /api/v1/users/me/notifications/:notificationId/read`
 - `PATCH /api/v1/users/me/notifications/read-all`
@@ -170,6 +177,11 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 - `GET /api/v1/admin/users` (pagination/filter/search/sort for user management table)
 - `PATCH /api/v1/admin/users/:userId/status` (`active|deactivated|suspended`)
 - `DELETE /api/v1/admin/users/:userId` (soft deactivate)
+- `GET /api/v1/admin/support/tickets`
+- `GET /api/v1/admin/support/tickets/:ticketId`
+- `PATCH /api/v1/admin/support/tickets/:ticketId`
+- `GET /api/v1/admin/workout-experiences`
+- `GET /api/v1/admin/workout-experiences/:experienceId`
 - `GET /api/v1/admin/settings/profile`
 - `PATCH /api/v1/admin/settings/profile`
 - `PATCH /api/v1/admin/settings/password`
