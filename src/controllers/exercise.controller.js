@@ -96,6 +96,231 @@ const parseBoolean = (value, fieldName) => {
   throw new AppError(`${fieldName} must be a boolean.`, httpStatus.BAD_REQUEST);
 };
 
+const parseBooleanLike = (value) => {
+  if (typeof value === "boolean") {
+    return { matched: true, value };
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) return { matched: true, value: true };
+    if (value === 0) return { matched: true, value: false };
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase().trim();
+    if (normalized === "true" || normalized === "1") return { matched: true, value: true };
+    if (normalized === "false" || normalized === "0") return { matched: true, value: false };
+  }
+
+  return { matched: false, value: undefined };
+};
+
+const normalizeExerciseExecutionMode = (value) => {
+  const normalized = asString(value).toLowerCase().replace(/\s+/g, "_");
+
+  if (
+    normalized === "set_reps" ||
+    normalized === "sets_reps" ||
+    normalized === "set_rep" ||
+    normalized === "sets_rep" ||
+    normalized === "sets" ||
+    normalized === "reps" ||
+    normalized === "rep" ||
+    normalized === "normal"
+  ) {
+    return "set_reps";
+  }
+
+  if (
+    normalized === "countdown" ||
+    normalized === "timer" ||
+    normalized === "time" ||
+    normalized === "duration" ||
+    normalized === "timed"
+  ) {
+    return "countdown";
+  }
+
+  throw new AppError("executionMode must be either set_reps or countdown.", httpStatus.BAD_REQUEST);
+};
+
+const parseExecutionModeFromBody = (body) => {
+  const executionModeInput = getField(body, ["executionMode", "exerciseMode", "mode"]);
+  const countdownModeInput = getField(body, ["countdown"]);
+
+  let fromExecutionMode = undefined;
+  if (executionModeInput.provided) {
+    fromExecutionMode = normalizeExerciseExecutionMode(executionModeInput.value);
+  }
+
+  let fromCountdown = undefined;
+  if (countdownModeInput.provided) {
+    const parsed = parseBooleanLike(countdownModeInput.value);
+    if (parsed.matched) {
+      fromCountdown = parsed.value ? "countdown" : "set_reps";
+    }
+  }
+
+  if (fromExecutionMode && fromCountdown && fromExecutionMode !== fromCountdown) {
+    throw new AppError(
+      "executionMode and countdown mode flag are conflicting. Choose one mode only.",
+      httpStatus.BAD_REQUEST
+    );
+  }
+
+  return {
+    provided: Boolean(executionModeInput.provided || fromCountdown),
+    value: fromExecutionMode || fromCountdown,
+  };
+};
+
+const getDurationInputFromBody = (body) => {
+  const directDurationInput = getField(body, ["durationSeconds", "countdownSeconds", "time", "seconds"]);
+  if (directDurationInput.provided) {
+    return directDurationInput;
+  }
+
+  const countdownInput = getField(body, ["countdown"]);
+  if (!countdownInput.provided) {
+    return { provided: false, value: undefined };
+  }
+
+  const parsedBoolean = parseBooleanLike(countdownInput.value);
+  if (parsedBoolean.matched) {
+    return { provided: false, value: undefined };
+  }
+
+  return countdownInput;
+};
+
+const getDurationValueFromTemplate = (template) => {
+  if (template.durationSeconds !== undefined && template.durationSeconds !== null && template.durationSeconds !== "") {
+    return template.durationSeconds;
+  }
+
+  if (template.countdown !== undefined && template.countdown !== null && template.countdown !== "") {
+    const parsedBoolean = parseBooleanLike(template.countdown);
+    if (!parsedBoolean.matched) {
+      return template.countdown;
+    }
+  }
+
+  if (template.time !== undefined && template.time !== null && template.time !== "") {
+    return template.time;
+  }
+
+  if (template.seconds !== undefined && template.seconds !== null && template.seconds !== "") {
+    return template.seconds;
+  }
+
+  return undefined;
+};
+
+const inferExecutionModeFromSets = (sets, fieldName = "defaultSets") => {
+  if (!Array.isArray(sets) || sets.length === 0) {
+    return undefined;
+  }
+
+  let inferredMode = undefined;
+
+  for (let index = 0; index < sets.length; index += 1) {
+    const set = sets[index] || {};
+    const hasReps = set.reps !== undefined && set.reps !== null;
+    const hasDuration = set.durationSeconds !== undefined && set.durationSeconds !== null;
+
+    if (!hasReps && !hasDuration) {
+      throw new AppError(
+        `${fieldName}[${index}] must include either reps or durationSeconds.`,
+        httpStatus.BAD_REQUEST
+      );
+    }
+
+    if (hasReps && hasDuration) {
+      throw new AppError(
+        `${fieldName}[${index}] cannot include both reps and durationSeconds. Choose one mode only.`,
+        httpStatus.BAD_REQUEST
+      );
+    }
+
+    const setMode = hasDuration ? "countdown" : "set_reps";
+    if (!inferredMode) {
+      inferredMode = setMode;
+      continue;
+    }
+
+    if (inferredMode !== setMode) {
+      throw new AppError(
+        `${fieldName} mixes set/reps and countdown sets. Choose one exercise mode only.`,
+        httpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  return inferredMode;
+};
+
+const normalizeExecutionModeForResponse = (exercise, normalizedSets) => {
+  if (exercise?.executionMode === "set_reps" || exercise?.executionMode === "countdown") {
+    return exercise.executionMode;
+  }
+
+  const hasDuration = normalizedSets.some((set) => set.durationSeconds !== undefined);
+  const hasReps = normalizedSets.some((set) => set.reps !== undefined);
+
+  if (hasDuration && !hasReps) {
+    return "countdown";
+  }
+
+  return "set_reps";
+};
+
+const validateSetsByExecutionMode = (sets, executionMode, fieldName = "defaultSets") => {
+  if (!executionMode) {
+    throw new AppError("executionMode is required. Choose set_reps or countdown.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!Array.isArray(sets)) {
+    throw new AppError(`${fieldName} must be an array.`, httpStatus.BAD_REQUEST);
+  }
+
+  const normalizedMode = normalizeExerciseExecutionMode(executionMode);
+
+  return sets.map((set, index) => {
+    const hasReps = set.reps !== undefined && set.reps !== null;
+    const hasDuration = set.durationSeconds !== undefined && set.durationSeconds !== null;
+
+    if (normalizedMode === "countdown") {
+      if (!hasDuration) {
+        throw new AppError(`${fieldName}[${index}] must include durationSeconds in countdown mode.`, httpStatus.BAD_REQUEST);
+      }
+
+      if (hasReps) {
+        throw new AppError(`${fieldName}[${index}] cannot include reps in countdown mode.`, httpStatus.BAD_REQUEST);
+      }
+
+      return {
+        setNumber: set.setNumber,
+        durationSeconds: set.durationSeconds,
+        weightKg: set.weightKg,
+      };
+    }
+
+    if (!hasReps) {
+      throw new AppError(`${fieldName}[${index}] must include reps in set_reps mode.`, httpStatus.BAD_REQUEST);
+    }
+
+    if (hasDuration) {
+      throw new AppError(`${fieldName}[${index}] cannot include durationSeconds in set_reps mode.`, httpStatus.BAD_REQUEST);
+    }
+
+    return {
+      setNumber: set.setNumber,
+      reps: set.reps,
+      weightKg: set.weightKg,
+    };
+  });
+};
+
 const normalizeExerciseStatus = (value) => {
   const normalized = asString(value).toLowerCase();
   if (!EXERCISE_STATUSES.has(normalized)) {
@@ -203,7 +428,7 @@ const normalizeSetTemplates = (rawValue, fieldName = "defaultSets") => {
     const setNumber = parseNumber(template.setNumber ?? index + 1, `${fieldName}[${index}].setNumber`, 1, true);
     const reps = parseNumber(template.reps ?? template.targetReps, `${fieldName}[${index}].reps`, 0, false);
     const durationSeconds = parseNumber(
-      template.durationSeconds ?? template.countdown ?? template.time ?? template.seconds,
+      getDurationValueFromTemplate(template),
       `${fieldName}[${index}].durationSeconds`,
       0,
       false
@@ -226,11 +451,11 @@ const normalizeSetTemplates = (rawValue, fieldName = "defaultSets") => {
   });
 };
 
-const parseDefaultSetsFromBody = (body) => {
+const parseDefaultSetsFromBody = (body, executionModeHint) => {
   const defaultSetsInput = getField(body, ["defaultSets", "setTemplates", "exerciseSets"]);
   const setCountInput = getField(body, ["sets", "setCount", "totalSets"]);
   const repsInput = getField(body, ["reps", "targetReps"]);
-  const countdownInput = getField(body, ["countdown", "durationSeconds", "time", "seconds"]);
+  const durationInput = getDurationInputFromBody(body);
   const weightInput = getField(body, ["weightKg", "weight"]);
 
   const hasValue = (input) => input !== undefined && input !== null && input !== "";
@@ -238,27 +463,45 @@ const parseDefaultSetsFromBody = (body) => {
     hasValue(defaultSetsInput.value) ||
     hasValue(setCountInput.value) ||
     hasValue(repsInput.value) ||
-    hasValue(countdownInput.value) ||
+    hasValue(durationInput.value) ||
     hasValue(weightInput.value);
 
   if (!hasAnyInput) {
-    return { provided: false, value: undefined };
+    return { provided: false, value: undefined, executionMode: undefined };
   }
 
   if (defaultSetsInput.provided) {
+    const templates = normalizeSetTemplates(defaultSetsInput.value, "defaultSets");
+    const inferredMode = inferExecutionModeFromSets(templates, "defaultSets");
+    const executionMode = executionModeHint || inferredMode;
+
     return {
       provided: true,
-      value: normalizeSetTemplates(defaultSetsInput.value, "defaultSets"),
+      value: validateSetsByExecutionMode(templates, executionMode, "defaultSets"),
+      executionMode,
     };
   }
 
   const setCount = parseNumber(setCountInput.value ?? 1, "sets", 1, false) ?? 1;
   const reps = parseNumber(repsInput.value, "reps", 0, false);
-  const durationSeconds = parseNumber(countdownInput.value, "countdown", 0, false);
+  const durationSeconds = parseNumber(durationInput.value, "durationSeconds", 0, false);
   const weightKg = parseNumber(weightInput.value, "weightKg", 0, false) ?? 1;
 
-  if (reps === undefined && durationSeconds === undefined) {
-    throw new AppError("Provide either reps or countdown/durationSeconds.", httpStatus.BAD_REQUEST);
+  if (reps !== undefined && durationSeconds !== undefined && !executionModeHint) {
+    throw new AppError(
+      "Provide either reps or durationSeconds. Choose one exercise mode only.",
+      httpStatus.BAD_REQUEST
+    );
+  }
+
+  const inferredMode = durationSeconds !== undefined ? "countdown" : reps !== undefined ? "set_reps" : undefined;
+  const executionMode = executionModeHint || inferredMode;
+
+  if (!executionMode) {
+    throw new AppError(
+      "Provide reps or durationSeconds and choose executionMode (set_reps or countdown).",
+      httpStatus.BAD_REQUEST
+    );
   }
 
   const defaultSets = Array.from({ length: Math.floor(setCount) }, (_, index) => ({
@@ -268,7 +511,11 @@ const parseDefaultSetsFromBody = (body) => {
     weightKg,
   }));
 
-  return { provided: true, value: defaultSets };
+  return {
+    provided: true,
+    value: validateSetsByExecutionMode(defaultSets, executionMode, "defaultSets"),
+    executionMode,
+  };
 };
 
 const normalizeDefaultSetsForResponse = (rawSets) =>
@@ -340,6 +587,8 @@ const toAssignedUser = (assignedUser) => {
 const buildExerciseSummary = (exercise, programNames = []) => {
   const defaultSets = normalizeDefaultSetsForResponse(exercise.defaultSets);
   const primarySet = defaultSets[0] || null;
+  const executionMode = normalizeExecutionModeForResponse(exercise, defaultSets);
+  const isCountdown = executionMode === "countdown";
 
   return {
     id: exercise._id,
@@ -357,9 +606,11 @@ const buildExerciseSummary = (exercise, programNames = []) => {
     targetMuscleImages: toMediaUrlList(exercise.targetMuscleImages),
     demoVideos: toMediaUrlList(exercise.demoVideos),
     defaultSets,
+    executionMode,
     sets: defaultSets.length,
-    reps: primarySet?.reps ?? null,
-    countdown: primarySet?.durationSeconds ?? null,
+    reps: isCountdown ? null : primarySet?.reps ?? null,
+    countdown: isCountdown,
+    durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
     weightKg: primarySet?.weightKg ?? 1,
     isVisibleInLibrary: exercise.isVisibleInLibrary,
     status: exercise.status,
@@ -426,7 +677,9 @@ const buildCreatePayload = async (body) => {
   const demoVideos = normalizeMediaList(
     getField(parsedBody, DEMO_VIDEO_FIELDS).value
   );
-  const defaultSetsInput = parseDefaultSetsFromBody(parsedBody);
+  const executionModeInput = parseExecutionModeFromBody(parsedBody);
+  const defaultSetsInput = parseDefaultSetsFromBody(parsedBody, executionModeInput.value);
+  const executionMode = executionModeInput.value || defaultSetsInput.executionMode;
   const status = normalizeExerciseStatus(getField(parsedBody, ["status"]).value || "published");
   const isVisibleInLibrary = parseBoolean(
     getField(parsedBody, ["isVisibleInLibrary", "visibleInLibrary", "isVisible"]).value,
@@ -439,6 +692,17 @@ const buildCreatePayload = async (body) => {
 
   if (demoVideos.length === 0) {
     throw new AppError("At least one exercise demo video is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!defaultSetsInput.provided || defaultSetsInput.value.length === 0) {
+    throw new AppError(
+      "Exercise setup is required. Provide sets with either reps mode or countdown mode.",
+      httpStatus.BAD_REQUEST
+    );
+  }
+
+  if (!executionMode) {
+    throw new AppError("executionMode is required. Choose set_reps or countdown.", httpStatus.BAD_REQUEST);
   }
 
   let assignedUser = null;
@@ -458,7 +722,8 @@ const buildCreatePayload = async (body) => {
     exerciseImages,
     targetMuscleImages,
     demoVideos,
-    defaultSets: defaultSetsInput.value || [],
+    defaultSets: defaultSetsInput.value,
+    executionMode,
     status,
     isVisibleInLibrary: isVisibleInLibrary ?? true,
     isActive: status !== "archived",
@@ -519,9 +784,28 @@ const buildUpdatePayload = async (body, currentExercise) => {
     updates.demoVideos = demoVideos;
   }
 
-  const defaultSetsInput = parseDefaultSetsFromBody(parsedBody);
+  const executionModeInput = parseExecutionModeFromBody(parsedBody);
+  const defaultSetsInput = parseDefaultSetsFromBody(parsedBody, executionModeInput.value);
   if (defaultSetsInput.provided) {
+    if (defaultSetsInput.value.length === 0) {
+      throw new AppError(
+        "defaultSets cannot be empty. Provide at least one set with reps or durationSeconds.",
+        httpStatus.BAD_REQUEST
+      );
+    }
     updates.defaultSets = defaultSetsInput.value;
+    updates.executionMode = defaultSetsInput.executionMode;
+  } else if (executionModeInput.provided) {
+    const normalizedCurrentSets = normalizeDefaultSetsForResponse(currentExercise.defaultSets);
+    if (normalizedCurrentSets.length === 0) {
+      throw new AppError(
+        "Cannot set executionMode without defaultSets. Provide sets with reps or durationSeconds.",
+        httpStatus.BAD_REQUEST
+      );
+    }
+
+    updates.executionMode = executionModeInput.value;
+    updates.defaultSets = validateSetsByExecutionMode(normalizedCurrentSets, executionModeInput.value, "defaultSets");
   }
 
   const userTypeInput = getField(parsedBody, ["userType", "plan"]);

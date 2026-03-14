@@ -405,12 +405,30 @@ const normalizeSetTemplatesForResponse = (rawSets) =>
       }))
     : [];
 
+const resolveExerciseExecutionMode = (executionMode, sets) => {
+  if (executionMode === "set_reps" || executionMode === "countdown") {
+    return executionMode;
+  }
+
+  const normalizedSets = Array.isArray(sets) ? sets : [];
+  const hasDuration = normalizedSets.some((set) => set.durationSeconds !== undefined);
+  const hasReps = normalizedSets.some((set) => set.reps !== undefined);
+
+  if (hasDuration && !hasReps) {
+    return "countdown";
+  }
+
+  return "set_reps";
+};
+
 const isPopulatedExerciseRef = (exerciseRef) =>
   Boolean(exerciseRef && typeof exerciseRef === "object" && "exerciseName" in exerciseRef);
 
 const mapExerciseFromLibrary = (exercise, index) => {
   const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
   const primarySet = defaultSets[0] || null;
+  const executionMode = resolveExerciseExecutionMode(exercise.executionMode, defaultSets);
+  const isCountdown = executionMode === "countdown";
 
   return {
     id: toIdString(exercise._id),
@@ -430,11 +448,12 @@ const mapExerciseFromLibrary = (exercise, index) => {
     demoVideos: toMediaUrlList(exercise.demoVideos),
     demoVideo: toMediaUrl(exercise.demoVideos?.[0]),
     defaultSets,
+    executionMode,
     sets: defaultSets.length,
-    reps: primarySet?.reps ?? null,
-    countdown: primarySet?.durationSeconds ?? null,
+    reps: isCountdown ? null : primarySet?.reps ?? null,
+    countdown: isCountdown,
     weightKg: primarySet?.weightKg ?? 1,
-    durationSeconds: primarySet?.durationSeconds ?? null,
+    durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
     calories: null,
     isVisibleInLibrary: exercise.isVisibleInLibrary,
     status: exercise.status,
@@ -460,6 +479,9 @@ const mapLegacyExercise = (exercise) => {
   const targetMuscleImages = Array.isArray(exercise.targetMuscleImages) ? exercise.targetMuscleImages : [];
   const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
   const primarySet = defaultSets[0] || null;
+  const executionMode = resolveExerciseExecutionMode(exercise.executionMode, defaultSets);
+  const isCountdown = executionMode === "countdown";
+  const fallbackDuration = exercise.durationSeconds ?? null;
 
   return {
     id: toIdString(exercise._id),
@@ -475,11 +497,12 @@ const mapLegacyExercise = (exercise) => {
     targetMuscleImages: toMediaUrlList(targetMuscleImages),
     targetMuscleImage: toMediaUrl(targetMuscleImages[0]),
     defaultSets,
+    executionMode,
     sets: defaultSets.length,
-    reps: primarySet?.reps ?? null,
-    countdown: primarySet?.durationSeconds ?? null,
+    reps: isCountdown ? null : primarySet?.reps ?? null,
+    countdown: isCountdown,
     weightKg: primarySet?.weightKg ?? 1,
-    durationSeconds: primarySet?.durationSeconds ?? exercise.durationSeconds ?? null,
+    durationSeconds: isCountdown ? primarySet?.durationSeconds ?? fallbackDuration : null,
     calories: exercise.calories ?? null,
   };
 };
@@ -575,18 +598,21 @@ const withEffectiveExerciseSets = (exercise, userSettingsMap) => {
   const customSets = exerciseId ? userSettingsMap.get(exerciseId) || [] : [];
   const effectiveSets = customSets.length > 0 ? customSets : defaultSets;
   const primarySet = effectiveSets[0] || null;
+  const executionMode = resolveExerciseExecutionMode(exercise.executionMode, effectiveSets);
+  const isCountdown = executionMode === "countdown";
 
   return {
     ...exercise,
+    executionMode,
     defaultSets,
     customSets,
     effectiveSets,
     hasCustomSettings: customSets.length > 0,
     sets: effectiveSets.length,
-    reps: primarySet?.reps ?? null,
-    countdown: primarySet?.durationSeconds ?? null,
+    reps: isCountdown ? null : primarySet?.reps ?? null,
+    countdown: isCountdown,
     weightKg: primarySet?.weightKg ?? 1,
-    durationSeconds: primarySet?.durationSeconds ?? exercise.durationSeconds ?? null,
+    durationSeconds: isCountdown ? primarySet?.durationSeconds ?? exercise.durationSeconds ?? null : null,
   };
 };
 
@@ -849,7 +875,7 @@ const populateProgramQuery = (query) =>
     .populate("assignedUser", "firstName email")
     .populate({
       path: "exerciseRefs",
-      select: "exerciseName userType assignedUser description keyBenefits muscleGroups exerciseImages targetMuscleImages demoVideos defaultSets isVisibleInLibrary status isActive",
+      select: "exerciseName userType assignedUser description keyBenefits muscleGroups exerciseImages targetMuscleImages demoVideos defaultSets executionMode isVisibleInLibrary status isActive",
       populate: {
         path: "assignedUser",
         select: "firstName email",
