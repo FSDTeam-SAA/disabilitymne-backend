@@ -8,7 +8,7 @@ Includes:
 - Refresh-token auth rotation (`accessToken` + `refreshToken`)
 - OTP-based password reset flow with branded email delivery
 - User onboarding + plan selection APIs
-- Payment model + mock checkout APIs with receipt emails
+- Stripe Checkout payment flow + webhook confirmation with receipt emails
 - Programs/Exercises APIs with global and premium-assigned visibility
 - Recipes APIs with global and premium-assigned visibility
 - `catchAsync` helper for async controllers
@@ -38,6 +38,16 @@ APP_BASE_URL=http://localhost:3000
 ```
 
 If SMTP settings are missing, the backend will continue working and log that email delivery was skipped.
+
+Configure Stripe values in `.env` for paid plans:
+
+```env
+STRIPE_SECRET_KEY=sk_test_replace_me
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+FRONTEND_URL=http://localhost:3000
+PAYMENT_SUCCESS_URL=http://localhost:3000/payment/success
+PAYMENT_CANCEL_URL=http://localhost:3000/payment/cancel
+```
 
 ## Upload Example
 
@@ -113,6 +123,7 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 
 - `GET /api/v1/payments/plans` (public)
 - `POST /api/v1/payments/checkout` (protected)
+- `POST /api/v1/payments/webhook` (public, Stripe webhook endpoint)
 - `GET /api/v1/payments/me` (protected)
 
 ## Program APIs (Exercises)
