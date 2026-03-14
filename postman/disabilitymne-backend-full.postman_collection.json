@@ -831,7 +831,7 @@
                 }
               ]
             },
-            "description": "Get resolved config for one exercise for the current user. Response includes defaultSets, customSets, effectiveSets, hasCustomSettings."
+            "description": "Get resolved config for one exercise for the current user. Response includes executionMode, countdown (boolean), durationSeconds (number for countdown mode), defaultSets, customSets, effectiveSets, hasCustomSettings."
           }
         },
         {
@@ -857,14 +857,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"customSets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"countdown\": 45,\n      \"weightKg\": 1\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"countdown\": 40,\n      \"weightKg\": 1.5\n    }\n  ]\n}",
+              "raw": "{\n  \"customSets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"weightKg\": 1\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"weightKg\": 1.5\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Save per-user override for one exercise. Use either customSets[] (advanced) OR simple fields (setCount + reps/countdown + weightKg). weightKg defaults to 1 when omitted."
+            "description": "Save per-user override for one exercise. Custom sets must follow the same mode as admin defaults: set_reps uses reps only, countdown uses durationSeconds only. weightKg defaults to 1 when omitted."
           }
         },
         {
@@ -1033,7 +1033,7 @@
           }
         }
       ],
-      "description": "Frontend flow note: for workout execution UI use exercise settings endpoints and program detail effective sets. Program detail now returns per exercise: defaultSets (admin), customSets (user), effectiveSets (resolved), hasCustomSettings."
+      "description": "Frontend flow note: for workout execution UI use exercise settings endpoints and program detail effective sets. Program detail now returns per exercise: executionMode, countdown (boolean), durationSeconds (countdown value), defaultSets (admin), customSets (user), effectiveSets (resolved), hasCustomSettings."
     },
     {
       "name": "Mobile App - Nutrition Screens",
@@ -1350,7 +1350,8 @@
                   "if (program.programThumbnail) pm.expect(program.programThumbnail).to.be.a('string');",
                   "const firstExercise = Array.isArray(program.exercises) ? program.exercises[0] : null;",
                   "if (firstExercise) pm.expect(Array.isArray(firstExercise.defaultSets)).to.eql(true);",
-                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.effectiveSets)).to.eql(true);"
+                  "if (firstExercise) pm.expect(Array.isArray(firstExercise.effectiveSets)).to.eql(true);",
+                  "if (firstExercise) pm.expect(firstExercise.countdown).to.be.a('boolean');"
                 ]
               }
             }
@@ -1372,7 +1373,7 @@
                 }
               ]
             },
-            "description": "Primary endpoint for workout player. Use exercise.effectiveSets for UI inputs/timers/weights. defaultSets are admin defaults; customSets are user overrides."
+            "description": "Primary endpoint for workout player. Use exercise.effectiveSets for UI inputs/timers/weights. Use exercise.countdown (boolean) to choose timer vs reps screen; when true, read exercise.durationSeconds."
           },
           "event": [
             {
@@ -1393,6 +1394,8 @@
                   "if (firstExercise) pm.expect(Array.isArray(firstExercise.defaultSets)).to.eql(true);",
                   "if (firstExercise) pm.expect(Array.isArray(firstExercise.customSets)).to.eql(true);",
                   "if (firstExercise) pm.expect(Array.isArray(firstExercise.effectiveSets)).to.eql(true);",
+                  "if (firstExercise) pm.expect(firstExercise.countdown).to.be.a('boolean');",
+                  "if (firstExercise?.countdown) pm.expect(firstExercise.durationSeconds).to.be.a('number');",
                   "if (firstExercise?.effectiveSets?.[0]?.weightKg !== undefined) pm.expect(firstExercise.effectiveSets[0].weightKg).to.be.a('number');"
                 ]
               }
@@ -1541,11 +1544,11 @@
                 }
               ]
             },
-            "description": "Returns exercise metadata including admin defaultSets and quick summary fields (sets/reps/countdown/weightKg)."
+            "description": "Returns exercise metadata including admin defaultSets and quick summary fields: executionMode, countdown (boolean), reps (set_reps mode), durationSeconds (countdown mode), weightKg."
           }
         }
       ],
-      "description": "Program/exercise contract: exercise blocks include defaultSets from admin and effectiveSets after applying user-specific override (if any)."
+      "description": "Program/exercise contract: exercise blocks include executionMode + countdown(boolean) for UI mode selection, plus defaultSets and effectiveSets after applying user-specific override (if any)."
     },
     {
       "name": "Mobile App - Chat, Support & Billing Screens",
@@ -2741,6 +2744,11 @@
                   "value": "all_user"
                 },
                 {
+                  "key": "executionMode",
+                  "type": "text",
+                  "value": "set_reps"
+                },
+                {
                   "key": "sets",
                   "type": "text",
                   "value": "4"
@@ -2751,9 +2759,9 @@
                   "value": "12"
                 },
                 {
-                  "key": "countdown",
+                  "key": "weightKg",
                   "type": "text",
-                  "value": "45"
+                  "value": "1"
                 },
                 {
                   "key": "description",
@@ -2807,7 +2815,7 @@
                 }
               ]
             },
-            "description": "Admin creates exercise and global defaults for everyone. Send either simple fields (sets/reps/countdown) or defaultSets JSON array. User-specific customization is handled in user settings routes."
+            "description": "Admin creates exercise and global defaults for everyone. Required mode: executionMode=set_reps (use reps) OR executionMode=countdown (use durationSeconds). Do not send reps and durationSeconds together. Response returns countdown as boolean."
           },
           "event": [
             {
@@ -2867,6 +2875,11 @@
                   "value": "Chest Press Machines Updated"
                 },
                 {
+                  "key": "executionMode",
+                  "type": "text",
+                  "value": "set_reps"
+                },
+                {
                   "key": "sets",
                   "type": "text",
                   "value": "3"
@@ -2877,9 +2890,9 @@
                   "value": "10"
                 },
                 {
-                  "key": "countdown",
+                  "key": "weightKg",
                   "type": "text",
-                  "value": "40"
+                  "value": "1"
                 },
                 {
                   "key": "status",
@@ -2908,7 +2921,7 @@
                 }
               ]
             },
-            "description": "Admin updates exercise and global default training values. Changes affect all users unless user has personal override for that exercise."
+            "description": "Admin updates exercise and global default training values. Keep one mode only: set_reps (reps) or countdown (durationSeconds). Changes affect all users unless user has personal override."
           }
         },
         {
@@ -2962,7 +2975,7 @@
           }
         }
       ],
-      "description": "Admin defines global defaults (sets/reps/countdown/weight) for each exercise. Users may override these values only for themselves via user exercise settings routes."
+      "description": "Admin defines global defaults with executionMode (set_reps or countdown). API responses now return countdown as boolean for frontend mode switching; durationSeconds carries timer value for countdown mode."
     },
     {
       "name": "Admin Dashboard - Subscription Plan Screens",

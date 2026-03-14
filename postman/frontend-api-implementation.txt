@@ -3,7 +3,7 @@ DISABILITYMNE BACKEND - CHANGES ONLY API GUIDE
 Generated: 2026-03-12
 
 Scope in this file:
-1) Admin exercise global defaults (sets/reps/countdown/weight)
+1) Admin exercise global defaults with executionMode (set_reps or countdown)
 2) User custom per-exercise override
 3) Program response contract (defaultSets/customSets/effectiveSets)
 4) Workout completion experience + admin feedback inbox
@@ -27,9 +27,10 @@ URL: {{baseUrl}}/api/v1/exercises/admin
 Role: Admin
 Implementation:
 - Creates exercise with global training defaults.
-- You can send either:
-  a) Simple fields: sets + reps/countdown + optional weightKg
-  b) Advanced field: defaultSets[]
+- You must choose one mode only:
+  a) set_reps mode: executionMode=set_reps with sets + reps (+ optional weightKg)
+  b) countdown mode: executionMode=countdown with sets + durationSeconds (+ optional weightKg)
+- Or send advanced field: defaultSets[] (all sets must follow one mode).
 - If weight is omitted, backend uses weightKg = 1 by default.
 - Supports multipart/form-data (images/videos).
 
@@ -37,16 +38,20 @@ Body (form-data typical):
 - exerciseName (required)
 - userType: all_user | premium_user
 - assignedUser (required if userType=premium_user)
-- sets, reps, countdown, weightKg (simple mode)
+- executionMode: set_reps | countdown
+- sets, reps, durationSeconds, weightKg (simple mode)
 - OR defaultSets (JSON string array), each item:
-  { setNumber, reps?, durationSeconds or countdown?, weightKg? }
+  { setNumber, reps?, durationSeconds?, weightKg? }
 - description, keyBenefits, muscleGroups
 - exerciseImages (file), targetMuscleImages (file), demoVideo/demoVideos (file)
 - status, isVisibleInLibrary
 
 Response keys:
 - data.defaultSets
-- data.sets, data.reps, data.countdown, data.weightKg
+- data.executionMode
+- data.countdown (boolean for UI mode switch)
+- data.durationSeconds (number when countdown=true)
+- data.sets, data.reps, data.weightKg
 
 
 API Name (Postman): Exercise Management - Update Exercise (Global Defaults)
@@ -79,11 +84,14 @@ Role: Authenticated User
 Implementation:
 - Returns resolved config for this user and exercise.
 - Key response fields:
+  - executionMode
+  - countdown (boolean)
+  - durationSeconds (countdown value)
   - defaultSets (admin values)
   - customSets (user override)
   - effectiveSets (custom if exists, else default)
   - hasCustomSettings (boolean)
-  - sets/reps/countdown/weightKg (from effective first set)
+  - sets/reps/weightKg (from effective first set)
 
 
 API Name (Postman): Exercise Settings Screen - Save My Custom Settings (User Override)
@@ -94,14 +102,15 @@ Implementation:
 - Saves override only for current user.
 - Two payload options:
   1) customSets[] (advanced)
-  2) setCount + reps/countdown + optional weightKg (simple)
+  2) setCount + reps OR durationSeconds + optional weightKg (simple)
+- Custom sets must follow the same executionMode as the admin exercise.
 - If weightKg omitted, backend defaults to 1.
 
 Body example (advanced):
 {
   "customSets": [
-    { "setNumber": 1, "reps": 12, "countdown": 45, "weightKg": 1 },
-    { "setNumber": 2, "reps": 10, "countdown": 40, "weightKg": 1.5 }
+    { "setNumber": 1, "reps": 12, "weightKg": 1 },
+    { "setNumber": 2, "reps": 10, "weightKg": 1.5 }
   ]
 }
 
@@ -109,7 +118,6 @@ Body example (simple):
 {
   "setCount": 3,
   "reps": 12,
-  "countdown": 45,
   "weightKg": 1
 }
 
@@ -144,6 +152,9 @@ Role: Authenticated User
 
 Implementation for frontend:
 - For each exercise, read:
+  - executionMode
+  - countdown (boolean) -> use this to choose timer vs reps screen
+  - durationSeconds (countdown mode value)
   - defaultSets (admin)
   - customSets (user)
   - effectiveSets (resolved values to render inputs/timer/weight)
@@ -280,7 +291,7 @@ Role: Authenticated User
 =====================================================================
 Frontend Flow (Recommended)
 =====================================================================
-1) Load program detail (or programs list) and render exercise.effectiveSets.
+1) Load program detail (or programs list), check exercise.countdown (boolean), then render exercise.effectiveSets.
 2) If user edits sets/reps/time/weight for an exercise, call PUT settings endpoint.
 3) Reload settings/program to reflect hasCustomSettings + effectiveSets.
 4) On completion screen, submit workout experience.
