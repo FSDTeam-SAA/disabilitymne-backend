@@ -116,6 +116,25 @@ const parseBoolean = (value, fieldName) => {
   throw new AppError(`${fieldName} must be a boolean.`, httpStatus.BAD_REQUEST);
 };
 
+const parseBooleanLike = (value) => {
+  if (typeof value === "boolean") {
+    return { matched: true, value };
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) return { matched: true, value: true };
+    if (value === 0) return { matched: true, value: false };
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase().trim();
+    if (normalized === "true" || normalized === "1") return { matched: true, value: true };
+    if (normalized === "false" || normalized === "0") return { matched: true, value: false };
+  }
+
+  return { matched: false, value: undefined };
+};
+
 const parseObjectId = (value, fieldName) => {
   const id = asString(value);
   if (!id) return null;
@@ -148,6 +167,90 @@ const normalizeSetTemplatesForResponse = (rawSets) =>
       }))
     : [];
 
+const getDurationValueFromTemplate = (template) => {
+  if (template.durationSeconds !== undefined && template.durationSeconds !== null && template.durationSeconds !== "") {
+    return template.durationSeconds;
+  }
+
+  if (template.countdown !== undefined && template.countdown !== null && template.countdown !== "") {
+    const parsedBoolean = parseBooleanLike(template.countdown);
+    if (!parsedBoolean.matched) {
+      return template.countdown;
+    }
+  }
+
+  if (template.time !== undefined && template.time !== null && template.time !== "") {
+    return template.time;
+  }
+
+  if (template.seconds !== undefined && template.seconds !== null && template.seconds !== "") {
+    return template.seconds;
+  }
+
+  return undefined;
+};
+
+const getDurationValueFromBody = (body) => {
+  if (Object.hasOwn(body, "durationSeconds")) return body.durationSeconds;
+  if (Object.hasOwn(body, "time")) return body.time;
+  if (Object.hasOwn(body, "seconds")) return body.seconds;
+
+  if (Object.hasOwn(body, "countdown")) {
+    const parsedBoolean = parseBooleanLike(body.countdown);
+    if (!parsedBoolean.matched) {
+      return body.countdown;
+    }
+  }
+
+  return undefined;
+};
+
+const resolveExecutionMode = (executionMode, sets) => {
+  if (executionMode === "set_reps" || executionMode === "countdown") {
+    return executionMode;
+  }
+
+  const normalizedSets = Array.isArray(sets) ? sets : [];
+  const hasDuration = normalizedSets.some((set) => set.durationSeconds !== undefined);
+  const hasReps = normalizedSets.some((set) => set.reps !== undefined);
+
+  if (hasDuration && !hasReps) {
+    return "countdown";
+  }
+
+  return "set_reps";
+};
+
+const validateSetsMatchExecutionMode = (sets, executionMode, fieldName = "customSets") => {
+  if (!Array.isArray(sets)) return;
+  if (!executionMode) return;
+
+  for (let index = 0; index < sets.length; index += 1) {
+    const set = sets[index] || {};
+    const hasReps = set.reps !== undefined && set.reps !== null;
+    const hasDuration = set.durationSeconds !== undefined && set.durationSeconds !== null;
+
+    if (executionMode === "countdown") {
+      if (!hasDuration) {
+        throw new AppError(`${fieldName}[${index}] must include durationSeconds in countdown mode.`, httpStatus.BAD_REQUEST);
+      }
+
+      if (hasReps) {
+        throw new AppError(`${fieldName}[${index}] cannot include reps in countdown mode.`, httpStatus.BAD_REQUEST);
+      }
+      continue;
+    }
+
+    if (!hasReps) {
+      throw new AppError(`${fieldName}[${index}] must include reps in set_reps mode.`, httpStatus.BAD_REQUEST);
+    }
+
+    if (hasDuration) {
+      throw new AppError(`${fieldName}[${index}] cannot include durationSeconds in set_reps mode.`, httpStatus.BAD_REQUEST);
+    }
+  }
+};
+
 const parseSetTemplates = (rawValue, fieldName = "customSets") => {
   const value = parseMaybeJson(rawValue);
   if (value === undefined || value === null || value === "") return [];
@@ -169,7 +272,7 @@ const parseSetTemplates = (rawValue, fieldName = "customSets") => {
     const setNumber = parseNumber(template.setNumber ?? index + 1, `${fieldName}[${index}].setNumber`, 1, true);
     const reps = parseNumber(template.reps ?? template.targetReps, `${fieldName}[${index}].reps`, 0, false);
     const durationSeconds = parseNumber(
-      template.durationSeconds ?? template.countdown ?? template.time ?? template.seconds,
+      getDurationValueFromTemplate(template),
       `${fieldName}[${index}].durationSeconds`,
       0,
       false
@@ -193,14 +296,15 @@ const parseSetTemplates = (rawValue, fieldName = "customSets") => {
 };
 
 const buildUniformSetsFromBody = (body) => {
+  const durationValue = getDurationValueFromBody(body);
   const hasSimpleInput =
     Object.hasOwn(body, "setCount") ||
     Object.hasOwn(body, "sets") ||
     Object.hasOwn(body, "reps") ||
-    Object.hasOwn(body, "countdown") ||
     Object.hasOwn(body, "durationSeconds") ||
     Object.hasOwn(body, "time") ||
     Object.hasOwn(body, "seconds") ||
+    durationValue !== undefined ||
     Object.hasOwn(body, "weightKg") ||
     Object.hasOwn(body, "weight");
 
@@ -216,12 +320,7 @@ const buildUniformSetsFromBody = (body) => {
     false
   ) ?? 1;
   const reps = parseNumber(body.reps, "reps", 0, false);
-  const durationSeconds = parseNumber(
-    body.countdown ?? body.durationSeconds ?? body.time ?? body.seconds,
-    "countdown",
-    0,
-    false
-  );
+  const durationSeconds = parseNumber(durationValue, "durationSeconds", 0, false);
   const weightKg = parseNumber(body.weightKg ?? body.weight, "weightKg", 0, false) ?? 1;
 
   if (reps === undefined && durationSeconds === undefined) {
@@ -260,7 +359,7 @@ const parseCustomSetsFromBody = (body) => {
 
 const ensureExerciseAccessibleForUser = async (exerciseId, user) => {
   const exercise = await Exercise.findById(exerciseId).select(
-    "exerciseName userType assignedUser status isActive defaultSets"
+    "exerciseName userType assignedUser status isActive defaultSets executionMode"
   );
 
   if (!exercise || !exercise.isActive || exercise.status !== "published") {
@@ -286,19 +385,23 @@ const toExerciseSettingsResponse = (exercise, customSets = []) => {
   const normalizedCustomSets = normalizeSetTemplatesForResponse(customSets);
   const effectiveSets = normalizedCustomSets.length > 0 ? normalizedCustomSets : defaultSets;
   const primarySet = effectiveSets[0] || null;
+  const executionMode = resolveExecutionMode(exercise.executionMode, effectiveSets);
+  const isCountdown = executionMode === "countdown";
 
   return {
     exercise: {
       id: exercise._id,
       exerciseName: exercise.exerciseName,
     },
+    executionMode,
     hasCustomSettings: normalizedCustomSets.length > 0,
     defaultSets,
     customSets: normalizedCustomSets,
     effectiveSets,
     sets: effectiveSets.length,
-    reps: primarySet?.reps ?? null,
-    countdown: primarySet?.durationSeconds ?? null,
+    reps: isCountdown ? null : primarySet?.reps ?? null,
+    countdown: isCountdown,
+    durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
     weightKg: primarySet?.weightKg ?? 1,
   };
 };
@@ -899,6 +1002,9 @@ export const upsertMyExerciseSettings = catchAsync(async (req, res) => {
   }
 
   const customSets = parseCustomSetsFromBody(req.body || {});
+  const exerciseDefaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
+  const exerciseExecutionMode = resolveExecutionMode(exercise.executionMode, exerciseDefaultSets);
+  validateSetsMatchExecutionMode(customSets, exerciseExecutionMode, "customSets");
 
   if (customSets.length === 0) {
     await UserExerciseSetting.deleteOne({ user: req.user._id, exercise: exercise._id });

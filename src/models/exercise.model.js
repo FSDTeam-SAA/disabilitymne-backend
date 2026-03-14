@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 export const EXERCISE_USER_TYPES = ["all_user", "premium_user"];
 export const EXERCISE_STATUSES = ["draft", "published", "archived"];
+export const EXERCISE_EXECUTION_MODES = ["set_reps", "countdown"];
 
 const mediaAssetSchema = new mongoose.Schema(
   {
@@ -85,6 +86,12 @@ const exerciseSchema = new mongoose.Schema(
       type: [defaultSetSchema],
       default: [],
     },
+    executionMode: {
+      type: String,
+      enum: EXERCISE_EXECUTION_MODES,
+      default: "set_reps",
+      index: true,
+    },
     isVisibleInLibrary: {
       type: Boolean,
       default: true,
@@ -138,6 +145,12 @@ exerciseSchema.pre("validate", function preValidate(next) {
         };
       })
     : [];
+
+  if (!this.executionMode) {
+    const hasDuration = this.defaultSets.some((set) => set.durationSeconds !== undefined && set.durationSeconds !== null);
+    const hasReps = this.defaultSets.some((set) => set.reps !== undefined && set.reps !== null);
+    this.executionMode = hasDuration && !hasReps ? "countdown" : "set_reps";
+  }
 
   if (this.userType === "all_user") {
     this.assignedUser = null;
