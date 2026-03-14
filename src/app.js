@@ -25,7 +25,16 @@ const app = express();
  * Core middlewares
  */
 app.use(helmet());
-app.use(express.json({ limit: "10mb" }));
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req, res, buf) => {
+      if (req.originalUrl.startsWith("/api/v1/payments/webhook")) {
+        req.rawBody = Buffer.from(buf);
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 
 /**

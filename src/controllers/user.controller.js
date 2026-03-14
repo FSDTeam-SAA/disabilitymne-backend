@@ -14,6 +14,63 @@ const asString = (value) => {
   return String(value).trim();
 };
 
+const parseMaybeJson = (value) => {
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+};
+
+const parseBooleanInput = (value, fieldName) => {
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+
+  throw new AppError(`${fieldName} must be a boolean.`, httpStatus.BAD_REQUEST);
+};
+
+const normalizeFitnessGoalsInput = (value) => {
+  const parsed = parseMaybeJson(value);
+
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (typeof parsed === "string") {
+    const fromCsv = parsed
+      .split(/[,\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (fromCsv.length > 0) {
+      return fromCsv;
+    }
+  }
+
+  return parsed;
+};
+
 const normalizeProfileImage = (value) => {
   if (value === null || value === "") {
     return null;
@@ -130,7 +187,7 @@ const applyOnboardingUpdates = (user, payload) => {
   }
 
   if (Object.hasOwn(updates, "onboardingCompleted")) {
-    user.onboardingCompleted = Boolean(updates.onboardingCompleted);
+    user.onboardingCompleted = parseBooleanInput(updates.onboardingCompleted, "onboardingCompleted");
   }
 
   if (user.onboardingStep >= MAX_ONBOARDING_STEP) {
@@ -143,6 +200,26 @@ const getProfileBodyFromRequest = (req) => {
 
   if (Array.isArray(payload.profileImage)) {
     payload.profileImage = payload.profileImage[0] || null;
+  }
+
+  if (Object.hasOwn(payload, "weightCurrent")) {
+    payload.weightCurrent = parseMaybeJson(payload.weightCurrent);
+  }
+
+  if (Object.hasOwn(payload, "goalWeight")) {
+    payload.goalWeight = parseMaybeJson(payload.goalWeight);
+  }
+
+  if (Object.hasOwn(payload, "height")) {
+    payload.height = parseMaybeJson(payload.height);
+  }
+
+  if (Object.hasOwn(payload, "fitnessGoals")) {
+    payload.fitnessGoals = normalizeFitnessGoalsInput(payload.fitnessGoals);
+  }
+
+  if (Object.hasOwn(payload, "onboardingCompleted")) {
+    payload.onboardingCompleted = parseBooleanInput(payload.onboardingCompleted, "onboardingCompleted");
   }
 
   return payload;

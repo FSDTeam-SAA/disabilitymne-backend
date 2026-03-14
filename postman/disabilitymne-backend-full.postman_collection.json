@@ -2,7 +2,7 @@
   "info": {
     "name": "Disabilitymne Backend - Screen Flow Collection",
     "_postman_id": "2f91c9fa-f06f-4d38-a1bc-f9135e6a3171",
-    "description": "Organized by Mobile App and Admin Dashboard screen flows. Uses separate mobile/admin auth variables so both frontend teams can work from the same collection without confusion.",
+    "description": "Organized by Mobile App and Admin Dashboard screen flows. Uses separate mobile/admin auth variables so both frontend teams can work from the same collection without confusion. Includes Stripe Checkout + webhook flow for subscriptions.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -329,15 +329,10 @@
           }
         },
         {
-          "name": "Onboarding/Profile Screen - Update Me (All Supported Fields)",
+          "name": "Onboarding/Profile Screen - Update Me (Form-Data + Image + All Fields)",
           "request": {
             "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/users/me",
             "auth": {
               "type": "bearer",
@@ -350,14 +345,101 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Evan\",\n  \"lastName\": \"Johnson\",\n  \"phone\": \"+13075550133\",\n  \"bio\": \"Adaptive training enthusiast\",\n  \"preferredLanguage\": \"en\",\n  \"profileImage\": \"{{uploadedImageUrl}}\",\n  \"gender\": \"female\",\n  \"age\": 26,\n  \"weightCurrent\": {\n    \"value\": 72,\n    \"unit\": \"kg\"\n  },\n  \"goalWeight\": {\n    \"value\": 68,\n    \"unit\": \"kg\"\n  },\n  \"height\": {\n    \"value\": 165,\n    \"unit\": \"cm\"\n  },\n  \"fitnessGoals\": [\n    \"build_muscle\",\n    \"boost_energy\"\n  ],\n  \"mobilityType\": \"wheelchair_user\",\n  \"mobilityTypeOther\": \"\",\n  \"fitnessExperience\": \"beginner\",\n  \"onboardingStep\": 8,\n  \"onboardingCompleted\": true\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "firstName",
+                  "type": "text",
+                  "value": "Evan"
+                },
+                {
+                  "key": "lastName",
+                  "type": "text",
+                  "value": "Johnson"
+                },
+                {
+                  "key": "phone",
+                  "type": "text",
+                  "value": "+13075550133"
+                },
+                {
+                  "key": "bio",
+                  "type": "text",
+                  "value": "Adaptive training enthusiast"
+                },
+                {
+                  "key": "preferredLanguage",
+                  "type": "text",
+                  "value": "en"
+                },
+                {
+                  "key": "profileImage",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "gender",
+                  "type": "text",
+                  "value": "female"
+                },
+                {
+                  "key": "age",
+                  "type": "text",
+                  "value": "26"
+                },
+                {
+                  "key": "weightCurrent",
+                  "type": "text",
+                  "value": "{\"value\":72,\"unit\":\"kg\"}"
+                },
+                {
+                  "key": "goalWeight",
+                  "type": "text",
+                  "value": "{\"value\":68,\"unit\":\"kg\"}"
+                },
+                {
+                  "key": "height",
+                  "type": "text",
+                  "value": "{\"value\":165,\"unit\":\"cm\"}"
+                },
+                {
+                  "key": "fitnessGoals",
+                  "type": "text",
+                  "value": "[\"build_muscle\",\"boost_energy\"]"
+                },
+                {
+                  "key": "mobilityType",
+                  "type": "text",
+                  "value": "wheelchair_user"
+                },
+                {
+                  "key": "mobilityTypeOther",
+                  "type": "text",
+                  "value": ""
+                },
+                {
+                  "key": "fitnessExperience",
+                  "type": "text",
+                  "value": "beginner"
+                },
+                {
+                  "key": "onboardingStep",
+                  "type": "text",
+                  "value": "8"
+                },
+                {
+                  "key": "onboardingCompleted",
+                  "type": "text",
+                  "value": "true"
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "profiles"
                 }
-              }
-            }
+              ]
+            },
+            "description": "Multipart profile update with direct image upload + all onboarding/profile fields. Use profileImage as file input. Send nested fields as JSON text in form-data: weightCurrent, goalWeight, height, fitnessGoals."
           }
         },
         {
@@ -1469,43 +1551,7 @@
       "name": "Mobile App - Chat, Support & Billing Screens",
       "item": [
         {
-          "name": "Coach Chat Screen - List Threads",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/api/v1/chat/threads?page=1&limit=20",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{mobileAccessToken}}",
-                  "type": "string"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "name": "Coach Chat Screen - List Admin Contacts",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": "{{baseUrl}}/api/v1/chat/contacts/admins",
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{mobileAccessToken}}",
-                  "type": "string"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "name": "Coach Chat Screen - Create Or Get Thread",
+          "name": "Coach Chat Flow 1 - Create Or Get Thread (Auto Coach)",
           "request": {
             "method": "POST",
             "header": [
@@ -1527,13 +1573,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"adminId\": \"{{adminUserId}}\"\n}",
+              "raw": "{}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Step 1: Create/get chat thread for current premium user. Do not send adminId. Backend auto-assigns the single active coach/admin."
           },
           "event": [
             {
@@ -1544,14 +1591,14 @@
                   "let data = {};",
                   "try { data = pm.response.json(); } catch (e) {}",
                   "const value = data?.data?.id || data?.data?._id;",
-                  "if (value) pm.collectionVariables.set('threadId', value);"
+                  "if (value) pm.collectionVariables.set(\"threadId\", value);"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Coach Chat Screen - Get Messages",
+          "name": "Coach Chat Flow 2 - Get Messages (Initial Thread Load)",
           "request": {
             "method": "GET",
             "header": [],
@@ -1565,11 +1612,12 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Step 2: Fetch thread messages using threadId from Step 1."
           }
         },
         {
-          "name": "Coach Chat Screen - Send Message",
+          "name": "Coach Chat Flow 3 - Send Message",
           "request": {
             "method": "POST",
             "header": [
@@ -1597,11 +1645,12 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Step 3: Send message to the coach in current thread."
           }
         },
         {
-          "name": "Coach Chat Screen - Mark Thread Read",
+          "name": "Coach Chat Flow 4 - Mark Thread Read",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1629,7 +1678,27 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Step 4: Mark unread messages in the thread as read."
+          }
+        },
+        {
+          "name": "Coach Chat Flow 5 - List Threads (Inbox Refresh)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/chat/threads?page=1&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Step 5: Refresh chat inbox after sending/reading messages."
           }
         },
         {
@@ -1706,7 +1775,7 @@
           }
         },
         {
-          "name": "Checkout Screen - Complete Payment (Mock Gateway)",
+          "name": "Checkout Screen - Create Stripe Checkout Session",
           "request": {
             "method": "POST",
             "header": [
@@ -1728,13 +1797,60 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"planKey\": \"{{planKey}}\",\n  \"paymentMethod\": \"card\",\n  \"paymentDetails\": {\n    \"cardNumber\": \"4242424242424242\",\n    \"expiryDate\": \"12/30\",\n    \"cvv\": \"123\"\n  }\n}",
+              "raw": "{\n  \"planKey\": \"{{planKey}}\",\n  \"successUrl\": \"{{paymentSuccessUrl}}\",\n  \"cancelUrl\": \"{{paymentCancelUrl}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
+            },
+            "description": "Creates Stripe Checkout Session for paid plans. Response includes checkoutUrl + sessionId. For free_trial plans, backend may activate immediately and return succeeded payment without a Stripe URL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const paymentId = data?.data?.payment?.id || data?.data?.payment?._id;",
+                  "const sessionId = data?.data?.sessionId;",
+                  "const checkoutUrl = data?.data?.checkoutUrl;",
+                  "if (paymentId) pm.collectionVariables.set(\"paymentRecordId\", paymentId);",
+                  "if (sessionId) pm.collectionVariables.set(\"checkoutSessionId\", sessionId);",
+                  "if (checkoutUrl) pm.collectionVariables.set(\"stripeCheckoutUrl\", checkoutUrl);",
+                  "if (checkoutUrl) pm.expect(checkoutUrl).to.match(/^https?:\\/\\//);"
+                ]
+              }
             }
+          ]
+        },
+        {
+          "name": "Stripe Webhook Endpoint (Reference / Dev)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "stripe-signature",
+                "value": "{{stripeSignatureHeader}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/payments/webhook",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"evt_replace_me\",\n  \"object\": \"event\",\n  \"type\": \"checkout.session.completed\",\n  \"data\": {\n    \"object\": {\n      \"id\": \"{{checkoutSessionId}}\",\n      \"object\": \"checkout.session\",\n      \"payment_status\": \"paid\",\n      \"metadata\": {\n        \"paymentId\": \"{{paymentRecordId}}\"\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Reference endpoint for Stripe webhook delivery. In real use, Stripe calls this URL directly with a valid stripe-signature. For local dev, run Stripe CLI: stripe listen --forward-to {{baseUrl}}/api/v1/payments/webhook"
           }
         },
         {
@@ -3311,6 +3427,30 @@
     {
       "key": "planKey",
       "value": "monthly_plan"
+    },
+    {
+      "key": "paymentSuccessUrl",
+      "value": "http://localhost:3000/payment/success"
+    },
+    {
+      "key": "paymentCancelUrl",
+      "value": "http://localhost:3000/payment/cancel"
+    },
+    {
+      "key": "checkoutSessionId",
+      "value": ""
+    },
+    {
+      "key": "stripeCheckoutUrl",
+      "value": ""
+    },
+    {
+      "key": "paymentRecordId",
+      "value": ""
+    },
+    {
+      "key": "stripeSignatureHeader",
+      "value": "t=replace,v1=replace"
     }
   ]
 }

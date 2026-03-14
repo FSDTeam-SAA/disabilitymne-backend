@@ -2,7 +2,6 @@ import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
 import {
   createOrGetChatThread,
-  getAdminContactsForChat,
   getChatMessages,
   getPremiumUsersForChat,
   listChatThreads,
@@ -20,7 +19,6 @@ router.get("/threads/:threadId/messages", getChatMessages);
 router.post("/threads/:threadId/messages", sendChatMessage);
 router.patch("/threads/:threadId/read", markChatThreadAsRead);
 
-router.get("/contacts/admins", getAdminContactsForChat);
 router.get("/admin/premium-users", restrictTo("admin"), getPremiumUsersForChat);
 
 export default router;

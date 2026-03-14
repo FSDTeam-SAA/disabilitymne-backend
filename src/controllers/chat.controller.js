@@ -72,22 +72,24 @@ const ensureActivePremiumUser = async (userId) => {
   return user;
 };
 
-const ensureActiveAdminUser = async (adminId) => {
-  const parsedId = parseObjectId(adminId, "adminId");
-  if (!parsedId) {
-    throw new AppError("adminId is required.", httpStatus.BAD_REQUEST);
+const getSingleActiveAdmin = async () => {
+  const admins = await User.find({ role: "admin", isActive: true })
+    .sort({ createdAt: 1 })
+    .limit(2)
+    .select("firstName email role");
+
+  if (admins.length === 0) {
+    throw new AppError("No active admin is available for chat.", httpStatus.NOT_FOUND);
   }
 
-  const admin = await User.findById(parsedId).select("firstName email role isActive");
-  if (!admin || !admin.isActive) {
-    throw new AppError("Admin user not found.", httpStatus.NOT_FOUND);
+  if (admins.length > 1) {
+    throw new AppError(
+      "Chat is configured for a single coach, but multiple active admin accounts were found.",
+      httpStatus.BAD_REQUEST
+    );
   }
 
-  if (admin.role !== "admin") {
-    throw new AppError("adminId must belong to an admin account.", httpStatus.BAD_REQUEST);
-  }
-
-  return admin;
+  return admins[0];
 };
 
 const toUserLite = (user) => ({
@@ -261,18 +263,7 @@ export const createOrGetChatThread = catchAsync(async (req, res) => {
       throw new AppError("Active premium subscription is required to use chat.", httpStatus.FORBIDDEN);
     }
 
-    const providedAdminId = parseObjectId(req.body.adminId, "adminId");
-    let admin = null;
-
-    if (providedAdminId) {
-      admin = await ensureActiveAdminUser(providedAdminId);
-    } else {
-      admin = await User.findOne({ role: "admin", isActive: true }).sort({ createdAt: 1 }).select("firstName email role");
-      if (!admin) {
-        throw new AppError("No active admin is available for chat.", httpStatus.NOT_FOUND);
-      }
-    }
-
+    const admin = await getSingleActiveAdmin();
     adminId = admin._id;
     premiumUserId = req.user._id;
   }
@@ -376,21 +367,6 @@ export const markChatThreadAsRead = catchAsync(async (req, res) => {
       markedCount: result.modifiedCount || 0,
       readAt: now,
     },
-  });
-});
-
-export const getAdminContactsForChat = catchAsync(async (req, res) => {
-  if (req.user.role !== "admin" && !isPremiumActiveUser(req.user)) {
-    throw new AppError("Active premium subscription is required to use chat.", httpStatus.FORBIDDEN);
-  }
-
-  const admins = await User.find({ role: "admin", isActive: true })
-    .sort({ firstName: 1, email: 1 })
-    .select("firstName email role");
-
-  res.status(httpStatus.OK).json({
-    success: true,
-    data: admins.map((admin) => toUserLite(admin)),
   });
 });
 
