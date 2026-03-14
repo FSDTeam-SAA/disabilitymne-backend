@@ -1580,7 +1580,7 @@
                 }
               }
             },
-            "description": "Step 1: Create/get chat thread for current premium user. Do not send adminId. Backend auto-assigns the single active coach/admin."
+            "description": "Step 1: Create/get chat thread for current premium user. Do not send adminId. Backend auto-assigns the single active coach/admin. After getting threadId, call socket.emit(\"chat:join-thread\", threadId)."
           },
           "event": [
             {
@@ -1613,19 +1613,14 @@
                 }
               ]
             },
-            "description": "Step 2: Fetch thread messages using threadId from Step 1."
+            "description": "Step 2: Fetch thread messages using threadId from Step 1. Each message now includes attachments[] and sender/recipient.profileImage."
           }
         },
         {
           "name": "Coach Chat Flow 3 - Send Message",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": "{{baseUrl}}/api/v1/chat/threads/{{threadId}}/messages",
             "auth": {
               "type": "bearer",
@@ -1638,15 +1633,26 @@
               ]
             },
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"message\": \"Hello coach, please review my workout.\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "message",
+                  "type": "text",
+                  "value": "Hello coach, please review my workout."
+                },
+                {
+                  "key": "attachments",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "attachments",
+                  "type": "file",
+                  "src": ""
                 }
-              }
+              ]
             },
-            "description": "Step 3: Send message to the coach in current thread."
+            "description": "Step 3: Send message with optional file attachments (multipart form-data). Allowed: text only, files only, or both. On success backend emits socket event chat:message:new and chat:thread:updated."
           }
         },
         {
@@ -1679,7 +1685,7 @@
                 }
               }
             },
-            "description": "Step 4: Mark unread messages in the thread as read."
+            "description": "Step 4: Mark unread messages in the thread as read. On success backend emits socket event chat:thread:read."
           }
         },
         {
@@ -1698,7 +1704,7 @@
                 }
               ]
             },
-            "description": "Step 5: Refresh chat inbox after sending/reading messages."
+            "description": "Step 5: Refresh chat inbox after sending/reading messages. Thread items include counterpart.profileImage for avatar rendering."
           }
         },
         {
@@ -1871,7 +1877,8 @@
             }
           }
         }
-      ]
+      ],
+      "description": "Single-coach chat flow with realtime socket events. Socket connect: io(BASE_URL, { auth: { token: <accessToken> } }) After Step 1, join room: socket.emit(\"chat:join-thread\", threadId) Listen events: chat:message:new, chat:thread:updated, chat:thread:read"
     },
     {
       "name": "Admin Dashboard - Auth & Access",
@@ -3451,6 +3458,10 @@
     {
       "key": "stripeSignatureHeader",
       "value": "t=replace,v1=replace"
+    },
+    {
+      "key": "socketUrl",
+      "value": "http://localhost:8000"
     }
   ]
 }

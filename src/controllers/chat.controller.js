@@ -3,13 +3,37 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import { emitChatMessageEvent, emitChatThreadReadEvent, emitChatThreadUpdatedEvent } from "../socket/chatSocket.js";
 import { ChatMessage } from "../models/chatMessage.model.js";
 import { ChatThread } from "../models/chatThread.model.js";
 import { User } from "../models/user.model.js";
 
+const CHAT_ATTACHMENT_FIELDS = ["attachments", "attachment", "files", "file"];
+
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const parseMaybeJson = (value) => {
+  if (typeof value !== "string") return value;
+
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
 };
 
 const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -42,6 +66,67 @@ const buildPagination = (page, limit, total) => ({
   total,
   totalPages: Math.max(1, Math.ceil(total / limit)),
 });
+
+const toProfileImageUrl = (profileImage) => {
+  if (!profileImage) return null;
+  if (typeof profileImage === "string") {
+    const value = asString(profileImage);
+    return value || null;
+  }
+
+  if (typeof profileImage === "object") {
+    const value = asString(profileImage.url || profileImage.path || profileImage.secure_url);
+    return value || null;
+  }
+
+  return null;
+};
+
+const normalizeMediaAsset = (rawValue) => {
+  const value = parseMaybeJson(rawValue);
+  if (!value) return null;
+
+  if (typeof value === "string") {
+    const url = asString(value);
+    if (!url) return null;
+    return {
+      url,
+      publicId: "",
+      mimetype: "",
+      size: 0,
+    };
+  }
+
+  if (typeof value !== "object") return null;
+
+  const url = asString(value.url || value.path || value.secure_url);
+  if (!url) return null;
+
+  const parsedSize = Number(value.size);
+  return {
+    url,
+    publicId: asString(value.publicId || value.public_id || value.filename),
+    mimetype: asString(value.mimetype || value.resource_type || value.format),
+    size: Number.isFinite(parsedSize) && parsedSize > 0 ? parsedSize : 0,
+  };
+};
+
+const normalizeAttachmentList = (rawValue) => {
+  const value = parseMaybeJson(rawValue);
+  if (value === undefined || value === null || value === "") return [];
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeMediaAsset).filter(Boolean);
+  }
+
+  const single = normalizeMediaAsset(value);
+  return single ? [single] : [];
+};
+
+const getChatBodyFromRequest = (req) =>
+  mergeUploadedMediaIntoBody(req.body, req.files, [
+    { target: "attachments", fieldNames: CHAT_ATTACHMENT_FIELDS },
+  ]);
 
 const requirePremiumAccessForUser = (user) => {
   if (user.role === "admin") return;
@@ -97,6 +182,7 @@ const toUserLite = (user) => ({
   firstName: user.firstName,
   email: user.email,
   role: user.role,
+  profileImage: toProfileImageUrl(user.profileImage),
 });
 
 const toMessage = (message, currentUserId) => ({
@@ -108,6 +194,7 @@ const toMessage = (message, currentUserId) => ({
       ? toUserLite(message.recipient)
       : { id: message.recipient },
   message: message.message,
+  attachments: normalizeAttachmentList(message.attachments),
   readAt: message.readAt || null,
   isMine: message.sender && message.sender._id
     ? message.sender._id.toString() === currentUserId.toString()
@@ -217,8 +304,8 @@ export const listChatThreads = catchAsync(async (req, res) => {
       .sort({ lastMessageAt: -1, updatedAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("admin", "firstName email role")
-      .populate("premiumUser", "firstName email role"),
+      .populate("admin", "firstName email role profileImage")
+      .populate("premiumUser", "firstName email role profileImage"),
     ChatThread.countDocuments(filter),
   ]);
 
@@ -275,8 +362,8 @@ export const createOrGetChatThread = catchAsync(async (req, res) => {
   });
 
   const populated = await ChatThread.findById(thread._id)
-    .populate("admin", "firstName email role")
-    .populate("premiumUser", "firstName email role");
+    .populate("admin", "firstName email role profileImage")
+    .populate("premiumUser", "firstName email role profileImage");
 
   res.status(httpStatus.OK).json({
     success: true,
@@ -297,8 +384,8 @@ export const getChatMessages = catchAsync(async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("sender", "firstName email role")
-      .populate("recipient", "firstName email role"),
+      .populate("sender", "firstName email role profileImage")
+      .populate("recipient", "firstName email role profileImage"),
     ChatMessage.countDocuments({ thread: thread._id }),
   ]);
 
@@ -315,10 +402,12 @@ export const sendChatMessage = catchAsync(async (req, res) => {
   requirePremiumAccessForUser(req.user);
 
   const thread = await getAccessibleThread(req.params.threadId, req.user);
-  const messageText = asString(req.body.message || req.body.text);
+  const payload = getChatBodyFromRequest(req);
+  const messageText = asString(payload.message || payload.text);
+  const attachments = normalizeAttachmentList(payload.attachments);
 
-  if (!messageText) {
-    throw new AppError("message is required.", httpStatus.BAD_REQUEST);
+  if (!messageText && attachments.length === 0) {
+    throw new AppError("message or attachment is required.", httpStatus.BAD_REQUEST);
   }
 
   const senderId = req.user._id;
@@ -332,20 +421,45 @@ export const sendChatMessage = catchAsync(async (req, res) => {
     sender: senderId,
     recipient: recipientId,
     message: messageText,
+    attachments,
   });
 
-  thread.lastMessagePreview = messageText.slice(0, 500);
+  thread.lastMessagePreview = messageText
+    ? messageText.slice(0, 500)
+    : attachments.length === 1
+      ? "Attachment"
+      : `${attachments.length} attachments`;
   thread.lastMessageAt = message.createdAt;
   await thread.save({ validateBeforeSave: false });
 
   const populated = await ChatMessage.findById(message._id)
-    .populate("sender", "firstName email role")
-    .populate("recipient", "firstName email role");
+    .populate("sender", "firstName email role profileImage")
+    .populate("recipient", "firstName email role profileImage");
+
+  const responseMessage = toMessage(populated, req.user._id);
+  const threadSummary = {
+    id: thread._id,
+    lastMessagePreview: thread.lastMessagePreview || "",
+    lastMessageAt: thread.lastMessageAt || thread.updatedAt,
+    updatedAt: thread.updatedAt,
+  };
+
+  emitChatMessageEvent({
+    threadId: thread._id,
+    userIds: [senderId, recipientId],
+    message: responseMessage,
+  });
+
+  emitChatThreadUpdatedEvent({
+    threadId: thread._id,
+    userIds: [senderId, recipientId],
+    thread: threadSummary,
+  });
 
   res.status(httpStatus.CREATED).json({
     success: true,
     message: "Message sent successfully.",
-    data: toMessage(populated, req.user._id),
+    data: responseMessage,
   });
 });
 
@@ -359,6 +473,16 @@ export const markChatThreadAsRead = catchAsync(async (req, res) => {
     { thread: thread._id, recipient: req.user._id, readAt: null },
     { $set: { readAt: now } }
   );
+
+  const counterpartId = req.user.role === "admin" ? thread.premiumUser : thread.admin;
+
+  emitChatThreadReadEvent({
+    threadId: thread._id,
+    userIds: [req.user._id, counterpartId],
+    readerId: req.user._id,
+    markedCount: result.modifiedCount || 0,
+    readAt: now,
+  });
 
   res.status(httpStatus.OK).json({
     success: true,
@@ -387,7 +511,7 @@ export const getPremiumUsersForChat = catchAsync(async (req, res) => {
   const users = await User.find(query)
     .sort({ firstName: 1, email: 1 })
     .limit(100)
-    .select("firstName email role selectedPlan subscriptionStatus");
+    .select("firstName email role selectedPlan subscriptionStatus profileImage");
 
   res.status(httpStatus.OK).json({
     success: true,
