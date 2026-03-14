@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
+import { uploadMediaFields } from "../middlewares/upload.js";
 import {
   createOrGetChatThread,
   getChatMessages,
@@ -10,13 +11,19 @@ import {
 } from "../controllers/chat.controller.js";
 
 const router = Router();
+const uploadChatAttachments = uploadMediaFields([
+  { name: "attachments", maxCount: 5 },
+  { name: "attachment", maxCount: 5 },
+  { name: "files", maxCount: 5 },
+  { name: "file", maxCount: 5 },
+]);
 
 router.use(protect);
 
 router.get("/threads", listChatThreads);
 router.post("/threads", createOrGetChatThread);
 router.get("/threads/:threadId/messages", getChatMessages);
-router.post("/threads/:threadId/messages", sendChatMessage);
+router.post("/threads/:threadId/messages", uploadChatAttachments, sendChatMessage);
 router.patch("/threads/:threadId/read", markChatThreadAsRead);
 
 router.get("/admin/premium-users", restrictTo("admin"), getPremiumUsersForChat);
