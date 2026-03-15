@@ -1,11 +1,21 @@
 import { Router } from "express";
-import { getMyPayments, getPlans, checkout, confirmCheckout, stripeWebhook } from "../controllers/payment.controller.js";
+import {
+  getMyPayments,
+  getPlans,
+  checkout,
+  confirmCheckout,
+  stripeWebhook,
+  checkoutSuccessPage,
+  checkoutCancelPage,
+} from "../controllers/payment.controller.js";
 import { protect } from "../middlewares/auth.js";
 
 const router = Router();
 
 router.get("/plans", getPlans);
 router.post("/webhook", stripeWebhook);
+router.get("/checkout/success", checkoutSuccessPage);
+router.get("/checkout/cancel", checkoutCancelPage);
 router.use(protect);
 router.get("/me", getMyPayments);
 router.post("/checkout", checkout);

@@ -75,21 +75,41 @@ const buildPaymentResponse = (payment) => ({
 
 const normalizeUrl = (value) => String(value || "").trim();
 
+const ensureStripeWebhookConfigured = () => {
+  const webhookSecret = normalizeUrl(process.env.STRIPE_WEBHOOK_SECRET);
+  if (!webhookSecret) {
+    throw new AppError(
+      "Stripe webhook mode is enabled but STRIPE_WEBHOOK_SECRET is not configured.",
+      httpStatus.INTERNAL_SERVER_ERROR
+    );
+  }
+};
+
+const resolveBackendBaseUrl = () =>
+  normalizeUrl(
+    process.env.BACKEND_PUBLIC_URL ||
+      process.env.BACKEND_URL ||
+      process.env.API_BASE_URL ||
+      process.env.APP_BASE_URL ||
+      process.env.FRONTEND_URL ||
+      "http://localhost:8000"
+  );
+
 const buildDefaultRedirectUrl = (type) => {
   const explicit = normalizeUrl(type === "success" ? process.env.PAYMENT_SUCCESS_URL : process.env.PAYMENT_CANCEL_URL);
   if (explicit) return explicit;
 
-  const frontendBase = normalizeUrl(process.env.FRONTEND_URL || process.env.APP_BASE_URL || "http://localhost:3000");
-  return `${frontendBase.replace(/\/+$/, "")}/payment/${type}`;
+  const backendBase = resolveBackendBaseUrl();
+  return `${backendBase.replace(/\/+$/, "")}/api/v1/payments/checkout/${type}`;
 };
 
-const resolveRedirectUrl = (providedValue, type) => {
-  const candidate = normalizeUrl(providedValue) || buildDefaultRedirectUrl(type);
+const resolveRedirectUrl = (type) => {
+  const candidate = buildDefaultRedirectUrl(type);
 
   try {
     return new URL(candidate).toString();
   } catch {
-    throw new AppError(`${type}Url must be a valid absolute URL.`, httpStatus.BAD_REQUEST);
+    throw new AppError(`${type} redirect URL must be a valid absolute URL.`, httpStatus.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -365,9 +385,11 @@ export const checkout = catchAsync(async (req, res) => {
     });
   }
 
+  ensureStripeWebhookConfigured();
+
   const stripe = getStripeClient();
-  const successUrl = withCheckoutSessionPlaceholder(resolveRedirectUrl(req.body.successUrl, "success"));
-  const cancelUrl = resolveRedirectUrl(req.body.cancelUrl, "cancel");
+  const successUrl = withCheckoutSessionPlaceholder(resolveRedirectUrl("success"));
+  const cancelUrl = resolveRedirectUrl("cancel");
   const currency = String(plan.currency || "USD").toLowerCase();
   const amountMinor = toMinorUnits(plan.price, currency);
 
@@ -432,15 +454,80 @@ export const checkout = catchAsync(async (req, res) => {
     data: {
       checkoutUrl: session.url,
       sessionId: session.id,
-      redirectUrls: {
-        success: successUrl,
-        cancel: cancelUrl,
-      },
       payment: buildPaymentResponse(payment),
       user: serializeUser(req.user),
     },
   });
 });
+
+const checkoutRedirectPage = ({ title, message }) => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f6f8fa;
+      color: #111827;
+      padding: 24px;
+    }
+    .card {
+      max-width: 560px;
+      width: 100%;
+      background: #ffffff;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      padding: 24px;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 22px;
+    }
+    p {
+      margin: 0;
+      line-height: 1.6;
+      color: #374151;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>${title}</h1>
+    <p>${message}</p>
+  </div>
+</body>
+</html>`;
+
+export const checkoutSuccessPage = (req, res) => {
+  res
+    .status(httpStatus.OK)
+    .type("html")
+    .send(
+      checkoutRedirectPage({
+        title: "Payment processed",
+        message: "Your payment was received. You can return to the app now.",
+      })
+    );
+};
+
+export const checkoutCancelPage = (req, res) => {
+  res
+    .status(httpStatus.OK)
+    .type("html")
+    .send(
+      checkoutRedirectPage({
+        title: "Payment canceled",
+        message: "No charge was completed. You can return to the app and try again anytime.",
+      })
+    );
+};
 
 export const getMyPayments = catchAsync(async (req, res) => {
   const payments = await Payment.find({ user: req.user._id }).sort({ createdAt: -1 });
