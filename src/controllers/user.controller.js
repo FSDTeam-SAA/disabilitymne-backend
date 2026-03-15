@@ -225,6 +225,20 @@ const getProfileBodyFromRequest = (req) => {
   return payload;
 };
 
+const getProfileImageFromRequest = (req) => {
+  const payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+
+  if (!Object.hasOwn(payload, "profileImage")) {
+    throw new AppError("profileImage is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (Array.isArray(payload.profileImage)) {
+    return payload.profileImage[0] || null;
+  }
+
+  return payload.profileImage;
+};
+
 export const getMe = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
@@ -239,6 +253,17 @@ export const updateMe = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     message: "Profile updated successfully.",
+    data: serializeUser(req.user),
+  });
+});
+
+export const updateMyProfileImage = catchAsync(async (req, res) => {
+  req.user.profileImage = normalizeProfileImage(getProfileImageFromRequest(req));
+  await req.user.save();
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Profile image updated successfully.",
     data: serializeUser(req.user),
   });
 });
