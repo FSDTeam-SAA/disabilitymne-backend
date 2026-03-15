@@ -443,6 +443,40 @@
           }
         },
         {
+          "name": "Profile Screen - Update Profile Image Only",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/users/me/profile-image",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "profileImage",
+                  "type": "file",
+                  "src": ""
+                },
+                {
+                  "key": "folder",
+                  "type": "text",
+                  "value": "profiles"
+                }
+              ]
+            },
+            "description": "Uploads only the current user profile image. Supported file fields: profileImage, avatar, image."
+          }
+        },
+        {
           "name": "Plan Selection Screen - Choose Subscription",
           "request": {
             "method": "POST",
@@ -1882,6 +1916,130 @@
         }
       ],
       "description": "Single-coach chat flow with realtime socket events. Socket connect: io(BASE_URL, { auth: { token: <accessToken> } }) After Step 1, join room: socket.emit(\"chat:join-thread\", threadId) Listen events: chat:message:new, chat:thread:updated, chat:thread:read"
+    },
+    {
+      "name": "Mobile App - Payment Flow (No Webhook, 1-2-3)",
+      "description": "Simple subscription payment flow for Flutter WebView (no webhook required).\\n1) Create checkout session.\\n2) Complete payment in WebView and copy session_id from success URL.\\n3) Confirm checkout session to activate subscription and verify billing history.",
+      "item": [
+        {
+          "name": "Payment Flow 1 - Create Checkout Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/payments/checkout",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\\n  \"planKey\": \"{{planKey}}\",\\n  \"successUrl\": \"{{paymentSuccessUrl}}\",\\n  \"cancelUrl\": \"{{paymentCancelUrl}}\"\\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Step 1/3: Creates Stripe Checkout session and returns checkoutUrl + sessionId. Open checkoutUrl in Flutter WebView."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const sessionId = data?.data?.sessionId;",
+                  "const checkoutUrl = data?.data?.checkoutUrl;",
+                  "if (sessionId) pm.collectionVariables.set(\"checkoutSessionId\", sessionId);",
+                  "if (checkoutUrl) pm.collectionVariables.set(\"stripeCheckoutUrl\", checkoutUrl);",
+                  "if (checkoutUrl) pm.expect(checkoutUrl).to.match(/^https?:\\/\\//);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment Flow 2 - Confirm Checkout (No Webhook)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/payments/checkout/confirm",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\\n  \"sessionId\": \"{{checkoutSessionId}}\"\\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Step 2/3: After WebView success redirect, copy session_id from the URL into {{checkoutSessionId}} and run this request. Backend verifies Stripe status and activates the subscription."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const paymentId = data?.data?.payment?.id || data?.data?.payment?._id;",
+                  "const subscriptionStatus = data?.data?.user?.subscriptionStatus;",
+                  "if (paymentId) pm.collectionVariables.set(\"paymentRecordId\", paymentId);",
+                  "if (subscriptionStatus) pm.collectionVariables.set(\"subscriptionStatus\", subscriptionStatus);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payment Flow 3 - My Payments (Verify)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/payments/me",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Step 3/3: Verify latest payment status is succeeded and use this screen data for billing history."
+          }
+        }
+      ]
     },
     {
       "name": "Admin Dashboard - Auth & Access",
@@ -3475,6 +3633,10 @@
     {
       "key": "socketUrl",
       "value": "http://localhost:8000"
+    },
+    {
+      "key": "subscriptionStatus",
+      "value": ""
     }
   ]
 }

@@ -8,7 +8,7 @@ Includes:
 - Refresh-token auth rotation (`accessToken` + `refreshToken`)
 - OTP-based password reset flow with branded email delivery
 - User onboarding + plan selection APIs
-- Stripe Checkout payment flow + webhook confirmation with receipt emails
+- Stripe Checkout payment flow with API-based confirmation (webhook optional) + receipt emails
 - Programs/Exercises APIs with global and premium-assigned visibility
 - Recipes APIs with global and premium-assigned visibility
 - `catchAsync` helper for async controllers
@@ -43,7 +43,8 @@ Configure Stripe values in `.env` for paid plans:
 
 ```env
 STRIPE_SECRET_KEY=sk_test_replace_me
-STRIPE_WEBHOOK_SECRET=whsec_replace_me
+# Optional: only needed if you also enable Stripe webhooks
+# STRIPE_WEBHOOK_SECRET=whsec_replace_me
 FRONTEND_URL=http://localhost:3000
 PAYMENT_SUCCESS_URL=http://localhost:3000/payment/success
 PAYMENT_CANCEL_URL=http://localhost:3000/payment/cancel
@@ -63,6 +64,8 @@ These endpoints now expect `multipart/form-data` when you want to upload images 
 
 - `PATCH /api/v1/users/me` (single endpoint for profile + onboarding fields)
   - image field: `profileImage`
+- `PATCH /api/v1/users/me/profile-image`
+  - image field: `profileImage` (also accepts `avatar` or `image`)
 - `PATCH /api/v1/admin/settings/profile`
   - image field: `profileImage`
 - `POST|PATCH /api/v1/programs/admin`
@@ -94,6 +97,7 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 ## User APIs (Protected)
 
 - `GET /api/v1/users/me`
+- `PATCH /api/v1/users/me/profile-image` (update profile image only; accepts multipart file `profileImage|avatar|image`)
 - `PATCH /api/v1/users/me` (updates both profile and onboarding fields)
 - `PATCH /api/v1/users/me/onboarding` (backward-compatible alias of `/me`)
 - `POST /api/v1/users/me/select-plan`
@@ -123,8 +127,16 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 
 - `GET /api/v1/payments/plans` (public)
 - `POST /api/v1/payments/checkout` (protected)
-- `POST /api/v1/payments/webhook` (public, Stripe webhook endpoint)
+- `POST /api/v1/payments/checkout/confirm` (protected, webhook-free confirmation using `sessionId`)
+- `GET /api/v1/payments/checkout/confirm/:sessionId` (protected, webhook-free confirmation/polling)
+- `POST /api/v1/payments/webhook` (public, optional Stripe webhook endpoint)
 - `GET /api/v1/payments/me` (protected)
+
+Flutter WebView flow (no webhook required):
+1. Call `POST /api/v1/payments/checkout` and open `data.checkoutUrl` in WebView.
+2. On redirect to your `successUrl`, read `session_id` from the URL query.
+3. Call `POST /api/v1/payments/checkout/confirm` with `{ "sessionId": "cs_..." }`.
+4. Use returned `data.payment.status` and `data.user.subscriptionStatus` to unlock premium.
 
 ## Program APIs (Exercises)
 

@@ -30,6 +30,7 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
   "xof",
   "xpf",
 ]);
+const STRIPE_SUCCESS_PAYMENT_STATUSES = new Set(["paid", "no_payment_required"]);
 
 let stripeClient = null;
 
@@ -195,6 +196,24 @@ const findPaymentByStripeSession = async (session) => {
   return Payment.findOne({ provider: "stripe", transactionId: sessionId });
 };
 
+const assertSessionBelongsToUser = ({ session, payment, userId }) => {
+  const expectedUserId = String(userId || "");
+  const sessionMetadataUserId = String(session?.metadata?.userId || "").trim();
+  const sessionClientReferenceId = String(session?.client_reference_id || "").trim();
+
+  if (payment && String(payment.user) !== expectedUserId) {
+    throw new AppError("You are not allowed to access this payment session.", httpStatus.FORBIDDEN);
+  }
+
+  if (sessionMetadataUserId && sessionMetadataUserId !== expectedUserId) {
+    throw new AppError("You are not allowed to access this payment session.", httpStatus.FORBIDDEN);
+  }
+
+  if (sessionClientReferenceId && sessionClientReferenceId !== expectedUserId) {
+    throw new AppError("You are not allowed to access this payment session.", httpStatus.FORBIDDEN);
+  }
+};
+
 const activatePlanForPayment = async (payment) => {
   const user = await User.findById(payment.user);
   if (!user || !user.isActive) {
@@ -274,6 +293,42 @@ const handleStripeCheckoutFailed = async (session, reason) => {
     stripeSessionId: session.id,
     stripePaymentStatus: String(session?.payment_status || "unpaid"),
   });
+};
+
+const getStripeCheckoutSession = async (sessionId) => {
+  const stripe = getStripeClient();
+
+  try {
+    return await stripe.checkout.sessions.retrieve(sessionId);
+  } catch (error) {
+    if (error?.statusCode === 404 || error?.code === "resource_missing") {
+      throw new AppError("Invalid or unknown Stripe checkout session.", httpStatus.BAD_REQUEST);
+    }
+
+    throw error;
+  }
+};
+
+const syncPaymentFromStripeSession = async (session) => {
+  const stripeSessionStatus = String(session?.status || "").toLowerCase();
+  const stripePaymentStatus = String(session?.payment_status || "").toLowerCase();
+
+  if (STRIPE_SUCCESS_PAYMENT_STATUSES.has(stripePaymentStatus)) {
+    await handleStripeCheckoutCompleted(session);
+    return "succeeded";
+  }
+
+  if (stripeSessionStatus === "expired") {
+    await handleStripeCheckoutFailed(session, "Stripe checkout session expired.");
+    return "failed";
+  }
+
+  if (stripeSessionStatus === "complete" && stripePaymentStatus === "unpaid") {
+    await handleStripeCheckoutFailed(session, "Stripe checkout finished but payment remains unpaid.");
+    return "failed";
+  }
+
+  return "pending";
 };
 
 export const getPlans = catchAsync(async (req, res) => {
@@ -377,6 +432,10 @@ export const checkout = catchAsync(async (req, res) => {
     data: {
       checkoutUrl: session.url,
       sessionId: session.id,
+      redirectUrls: {
+        success: successUrl,
+        cancel: cancelUrl,
+      },
       payment: buildPaymentResponse(payment),
       user: serializeUser(req.user),
     },
@@ -389,6 +448,43 @@ export const getMyPayments = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     data: payments.map(buildPaymentResponse),
+  });
+});
+
+export const confirmCheckout = catchAsync(async (req, res) => {
+  const sessionId = String(req.body.sessionId || req.params.sessionId || req.query.sessionId || req.query.session_id || "").trim();
+
+  if (!sessionId) {
+    throw new AppError("sessionId is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const session = await getStripeCheckoutSession(sessionId);
+  const payment = await findPaymentByStripeSession(session);
+
+  if (!payment) {
+    throw new AppError("No payment record found for the provided checkout session.", httpStatus.NOT_FOUND);
+  }
+
+  assertSessionBelongsToUser({
+    session,
+    payment,
+    userId: req.user._id,
+  });
+
+  await syncPaymentFromStripeSession(session);
+
+  const [freshPayment, freshUser] = await Promise.all([Payment.findById(payment._id), User.findById(req.user._id)]);
+
+  return res.status(httpStatus.OK).json({
+    success: true,
+    message: "Checkout session status synchronized.",
+    data: {
+      sessionId: session.id,
+      stripeSessionStatus: String(session?.status || ""),
+      stripePaymentStatus: String(session?.payment_status || ""),
+      payment: freshPayment ? buildPaymentResponse(freshPayment) : null,
+      user: freshUser ? serializeUser(freshUser) : null,
+    },
   });
 });
 
