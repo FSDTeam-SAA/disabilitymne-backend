@@ -8,7 +8,7 @@ Includes:
 - Refresh-token auth rotation (`accessToken` + `refreshToken`)
 - OTP-based password reset flow with branded email delivery
 - User onboarding + plan selection APIs
-- Stripe Checkout payment flow with API-based confirmation (webhook optional) + receipt emails
+- Stripe Checkout payment flow with webhook-based confirmation + receipt emails
 - Programs/Exercises APIs with global and premium-assigned visibility
 - Recipes APIs with global and premium-assigned visibility
 - `catchAsync` helper for async controllers
@@ -43,11 +43,11 @@ Configure Stripe values in `.env` for paid plans:
 
 ```env
 STRIPE_SECRET_KEY=sk_test_replace_me
-# Optional: only needed if you also enable Stripe webhooks
-# STRIPE_WEBHOOK_SECRET=whsec_replace_me
-FRONTEND_URL=http://localhost:3000
-PAYMENT_SUCCESS_URL=http://localhost:3000/payment/success
-PAYMENT_CANCEL_URL=http://localhost:3000/payment/cancel
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+BACKEND_PUBLIC_URL=http://localhost:8000
+# Optional overrides:
+# PAYMENT_SUCCESS_URL=https://api.example.com/api/v1/payments/checkout/success
+# PAYMENT_CANCEL_URL=https://api.example.com/api/v1/payments/checkout/cancel
 ```
 
 ## Upload Example
@@ -127,16 +127,18 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 
 - `GET /api/v1/payments/plans` (public)
 - `POST /api/v1/payments/checkout` (protected)
+- `GET /api/v1/payments/checkout/success` (public Stripe redirect page)
+- `GET /api/v1/payments/checkout/cancel` (public Stripe redirect page)
 - `POST /api/v1/payments/checkout/confirm` (protected, webhook-free confirmation using `sessionId`)
 - `GET /api/v1/payments/checkout/confirm/:sessionId` (protected, webhook-free confirmation/polling)
-- `POST /api/v1/payments/webhook` (public, optional Stripe webhook endpoint)
+- `POST /api/v1/payments/webhook` (public, Stripe webhook endpoint)
 - `GET /api/v1/payments/me` (protected)
 
-Flutter WebView flow (no webhook required):
-1. Call `POST /api/v1/payments/checkout` and open `data.checkoutUrl` in WebView.
-2. On redirect to your `successUrl`, read `session_id` from the URL query.
-3. Call `POST /api/v1/payments/checkout/confirm` with `{ "sessionId": "cs_..." }`.
-4. Use returned `data.payment.status` and `data.user.subscriptionStatus` to unlock premium.
+Flutter WebView flow (webhook-first, no custom success/cancel URL needed from app):
+1. Call `POST /api/v1/payments/checkout` with only `planKey`, then open `data.checkoutUrl` in WebView.
+2. User completes payment. Stripe redirects to backend `/api/v1/payments/checkout/success` or `/cancel`.
+3. Webhook (`POST /api/v1/payments/webhook`) updates payment + activates subscription.
+4. Mobile app refreshes `GET /api/v1/payments/me` or `GET /api/v1/users/me` to reflect active plan.
 
 ## Program APIs (Exercises)
 
