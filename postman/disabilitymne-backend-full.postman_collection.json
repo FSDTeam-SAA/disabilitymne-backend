@@ -1121,7 +1121,7 @@
                 }
               ]
             },
-            "description": "Returns totals, macroPercentages, macroProgress, targets, energy (eaten/burned/goal/remaining), meals[] and mealRecommendations[] for calculator screen."
+            "description": "Calculator screen source. Use data.energy (eaten/burned/goal/remaining), data.macroProgress, data.meals[].recommendation, and data.meals[].macroPercentages."
           }
         },
         {
@@ -1195,7 +1195,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Autocomplete list for search box. Use data[].label + data[].fdcId."
           }
         },
         {
@@ -1213,8 +1214,23 @@
                   "type": "string"
                 }
               ]
+            },
+            "description": "Search result cards source. Use foods[].display.caloriesKcal, foods[].defaultPortionOption, foods[].portionOptions, foods[].nutrientsPer100g."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let body = {};",
+                  "try { body = pm.response.json(); } catch (e) {}",
+                  "const first = body?.data?.foods?.[0];",
+                  "if (first?.fdcId) pm.collectionVariables.set(\"fdcId\", first.fdcId);"
+                ]
+              }
             }
-          }
+          ]
         },
         {
           "name": "Food Detail Screen - USDA Food Details",
@@ -1232,8 +1248,23 @@
                 }
               ]
             },
-            "description": "Includes nutrients, nutrientsPer100g, and portionOptions[] (label, gramWeight) for How much dropdown + live nutrition math."
-          }
+            "description": "Food detail + unit dropdown source. Use data.portionOptions[] (label, gramWeight, estimated), data.defaultPortionOption, data.nutrientsPer100g, data.display."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let body = {};",
+                  "try { body = pm.response.json(); } catch (e) {}",
+                  "const firstPortion = body?.data?.defaultPortionOption || body?.data?.portionOptions?.[0];",
+                  "if (firstPortion?.gramWeight !== undefined) pm.collectionVariables.set(\"selectedPortionGrams\", firstPortion.gramWeight);",
+                  "if (firstPortion?.label) pm.collectionVariables.set(\"selectedPortionLabel\", firstPortion.label);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Food Detail Screen - Track Food Entry",
@@ -1259,6 +1290,54 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"date\": \"2026-03-02\",\n  \"mealType\": \"breakfast\",\n  \"foodName\": \"Apple\",\n  \"fdcId\": \"{{fdcId}}\",\n  \"source\": \"usda\",\n  \"quantity\": 2.5,\n  \"servingLabel\": \"Gram\",\n  \"totalGrams\": 125,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"isFavorite\": true,\n  \"notes\": \"Breakfast fruit\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Track entry using explicit totalGrams. Keys: date/entryDate, mealType, foodName, fdcId, quantity, servingLabel, totalGrams or servingGrams, nutrientsPer100g."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let data = {};",
+                  "try { data = pm.response.json(); } catch (e) {}",
+                  "const value = data?.data?.id || data?.data?._id;",
+                  "if (value) pm.collectionVariables.set('nutritionEntryId', value);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Food Detail Screen - Track Food Entry (Using Portion Option)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/nutrition/diary/entries",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Track entry from selected portion. Send quantity + servingLabel + servingGrams; backend computes totalGrams.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-03-02\",\n  \"mealType\": \"breakfast\",\n  \"foodName\": \"Apple\",\n  \"fdcId\": \"{{fdcId}}\",\n  \"source\": \"usda\",\n  \"quantity\": 1,\n  \"servingLabel\": \"Whole\",\n  \"servingGrams\": 125,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"isFavorite\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1328,6 +1407,40 @@
                   "language": "json"
                 }
               }
+            },
+            "description": "Update tracked entry. Same keys as create: quantity, servingLabel, servingGrams/totalGrams, nutrientsPer100g, mealType, isFavorite, notes."
+          }
+        },
+        {
+          "name": "Food Detail Screen - Update Tracked Entry (Using Portion Option)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/nutrition/diary/entries/{{nutritionEntryId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Update using selected unit from portionOptions. Send quantity + servingLabel + servingGrams to recalculate totals from nutrientsPer100g.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mealType\": \"breakfast\",\n  \"quantity\": 0.5,\n  \"servingLabel\": \"Half\",\n  \"servingGrams\": 62.5,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"notes\": \"Adjusted serving size\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             }
           }
         },
@@ -1378,7 +1491,8 @@
                   "language": "json"
                 }
               }
-            }
+            },
+            "description": "Optional explicit macro target calculator. For these screens, targets can also be included via GET /nutrition/diary query params."
           }
         }
       ]
