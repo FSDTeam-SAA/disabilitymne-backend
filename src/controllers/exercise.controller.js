@@ -235,13 +235,6 @@ const inferExecutionModeFromSets = (sets, fieldName = "defaultSets") => {
       );
     }
 
-    if (hasReps && hasDuration) {
-      throw new AppError(
-        `${fieldName}[${index}] cannot include both reps and durationSeconds. Choose one mode only.`,
-        httpStatus.BAD_REQUEST
-      );
-    }
-
     const setMode = hasDuration ? "countdown" : "set_reps";
     if (!inferredMode) {
       inferredMode = setMode;
@@ -265,9 +258,7 @@ const normalizeExecutionModeForResponse = (exercise, normalizedSets) => {
   }
 
   const hasDuration = normalizedSets.some((set) => set.durationSeconds !== undefined);
-  const hasReps = normalizedSets.some((set) => set.reps !== undefined);
-
-  if (hasDuration && !hasReps) {
+  if (hasDuration) {
     return "countdown";
   }
 
@@ -294,12 +285,9 @@ const validateSetsByExecutionMode = (sets, executionMode, fieldName = "defaultSe
         throw new AppError(`${fieldName}[${index}] must include durationSeconds in countdown mode.`, httpStatus.BAD_REQUEST);
       }
 
-      if (hasReps) {
-        throw new AppError(`${fieldName}[${index}] cannot include reps in countdown mode.`, httpStatus.BAD_REQUEST);
-      }
-
       return {
         setNumber: set.setNumber,
+        reps: set.reps,
         durationSeconds: set.durationSeconds,
         weightKg: set.weightKg,
       };
@@ -487,13 +475,6 @@ const parseDefaultSetsFromBody = (body, executionModeHint) => {
   const durationSeconds = parseNumber(durationInput.value, "durationSeconds", 0, false);
   const weightKg = parseNumber(weightInput.value, "weightKg", 0, false) ?? 1;
 
-  if (reps !== undefined && durationSeconds !== undefined && !executionModeHint) {
-    throw new AppError(
-      "Provide either reps or durationSeconds. Choose one exercise mode only.",
-      httpStatus.BAD_REQUEST
-    );
-  }
-
   const inferredMode = durationSeconds !== undefined ? "countdown" : reps !== undefined ? "set_reps" : undefined;
   const executionMode = executionModeHint || inferredMode;
 
@@ -608,7 +589,7 @@ const buildExerciseSummary = (exercise, programNames = []) => {
     defaultSets,
     executionMode,
     sets: defaultSets.length,
-    reps: isCountdown ? null : primarySet?.reps ?? null,
+    reps: primarySet?.reps ?? null,
     countdown: isCountdown,
     durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
     weightKg: primarySet?.weightKg ?? 1,
