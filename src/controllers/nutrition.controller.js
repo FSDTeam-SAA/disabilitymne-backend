@@ -127,11 +127,11 @@ const findNutrientValue = (foodNutrients, aliases) => {
 
   const aliasSet = new Set(aliases.map((alias) => String(alias).toLowerCase()));
   for (const nutrient of foodNutrients) {
-    const nutrientId = String(nutrient.nutrientId || "").toLowerCase();
-    const nutrientNumber = String(nutrient.nutrientNumber || "").toLowerCase();
-    const nutrientName = String(nutrient.nutrientName || "").toLowerCase();
+    const nutrientId = String(nutrient.nutrientId || nutrient.nutrient?.id || "").toLowerCase();
+    const nutrientNumber = String(nutrient.nutrientNumber || nutrient.nutrient?.number || "").toLowerCase();
+    const nutrientName = String(nutrient.nutrientName || nutrient.nutrient?.name || "").toLowerCase();
     if (aliasSet.has(nutrientId) || aliasSet.has(nutrientNumber) || aliasSet.has(nutrientName)) {
-      const value = Number(nutrient.value);
+      const value = Number(nutrient.value ?? nutrient.amount);
       if (Number.isFinite(value)) return value;
     }
   }
@@ -163,33 +163,122 @@ const toPortionLabel = (portion = {}) => {
   return parts.join(" ").trim() || "Serving";
 };
 
+const convertToGrams = (value, unit) => {
+  const amount = toFiniteNumber(value);
+  if (!amount || amount <= 0) return null;
+
+  const normalized = asString(unit).toLowerCase();
+  if (["g", "gram", "grams"].includes(normalized)) return amount;
+  if (["oz", "onz", "ounce", "ounces"].includes(normalized)) return amount * 28.3495;
+  if (["ml", "milliliter", "milliliters"].includes(normalized)) return amount;
+
+  return null;
+};
+
+const upsertPortionOption = (list, option) => {
+  if (!option || !option.label || !Number.isFinite(Number(option.gramWeight))) return;
+  const gramWeight = round(Number(option.gramWeight), 1);
+  if (gramWeight <= 0) return;
+
+  const key = `${option.label.toLowerCase()}|${gramWeight}`;
+  if (list.some((item) => `${item.label.toLowerCase()}|${item.gramWeight}` === key)) return;
+
+  list.push({
+    id: option.id ?? null,
+    label: option.label,
+    amount: Number.isFinite(Number(option.amount)) ? Number(option.amount) : 1,
+    gramWeight,
+    estimated: Boolean(option.estimated),
+  });
+};
+
 const mapFoodPortions = (food = {}) => {
   const portions = Array.isArray(food.foodPortions) ? food.foodPortions : [];
-  const mapped = portions
-    .map((portion) => {
+  const mapped = portions.reduce((acc, portion) => {
       const gramWeight = toFiniteNumber(portion.gramWeight);
       if (!gramWeight || gramWeight <= 0) {
-        return null;
+        return acc;
       }
 
-      return {
+      acc.push({
         id: portion.id ?? null,
         label: toPortionLabel(portion),
         amount: toFiniteNumber(portion.amount) || 1,
         gramWeight: round(gramWeight, 1),
-      };
-    })
-    .filter(Boolean);
+      });
 
-  const unique = new Map();
-  for (const portion of mapped) {
-    const key = `${portion.label.toLowerCase()}|${portion.gramWeight}`;
-    if (!unique.has(key)) {
-      unique.set(key, portion);
+      return acc;
+    }, []);
+
+  const servingGramWeight = convertToGrams(food.servingSize, food.servingSizeUnit);
+  if (servingGramWeight) {
+    const householdLabel = asString(food.householdServingFullText);
+    const servingLabel = householdLabel ? `Serving (${householdLabel})` : "Serving";
+    upsertPortionOption(mapped, {
+      label: servingLabel,
+      gramWeight: servingGramWeight,
+      amount: 1,
+    });
+    upsertPortionOption(mapped, {
+      label: "Half serving",
+      gramWeight: servingGramWeight / 2,
+      amount: 0.5,
+    });
+  }
+
+  const householdText = asString(food.householdServingFullText);
+  const householdMatch = householdText.match(/([0-9]+(?:\\.[0-9]+)?)\\s*(oz|onz|ounce|ounces)\\b/i);
+  if (!servingGramWeight && householdMatch) {
+    const gramsFromOz = convertToGrams(Number(householdMatch[1]), householdMatch[2]);
+    if (gramsFromOz) {
+      upsertPortionOption(mapped, {
+        label: `Serving (${householdText})`,
+        gramWeight: gramsFromOz,
+        amount: 1,
+      });
     }
   }
 
-  const result = Array.from(unique.values());
+  const descriptor = `${asString(food.description)} ${asString(
+    typeof food.foodCategory === "string" ? food.foodCategory : food.foodCategory?.description || food.brandedFoodCategory
+  )}`.toLowerCase();
+
+  if (servingGramWeight && /\b(apple|banana|orange|pear|peach|mango|avocado)\b/.test(descriptor)) {
+    upsertPortionOption(mapped, {
+      label: "Whole",
+      gramWeight: servingGramWeight,
+      estimated: true,
+    });
+    upsertPortionOption(mapped, {
+      label: "Half",
+      gramWeight: servingGramWeight / 2,
+      amount: 0.5,
+      estimated: true,
+    });
+    upsertPortionOption(mapped, {
+      label: "Slice",
+      gramWeight: servingGramWeight / 10,
+      estimated: true,
+    });
+  }
+
+  if (/\b(spread|peanut butter|butter|sauce|syrup|honey|oil)\b/.test(descriptor)) {
+    upsertPortionOption(mapped, {
+      label: "Tablespoon",
+      gramWeight: 15,
+      estimated: true,
+    });
+    upsertPortionOption(mapped, {
+      label: "Teaspoon",
+      gramWeight: 5,
+      estimated: true,
+    });
+  }
+
+  const result = [];
+  for (const portion of mapped) {
+    upsertPortionOption(result, portion);
+  }
 
   if (!result.some((portion) => portion.label.toLowerCase() === "gram" && portion.gramWeight === 1)) {
     result.push({
@@ -197,6 +286,7 @@ const mapFoodPortions = (food = {}) => {
       label: "Gram",
       amount: 1,
       gramWeight: 1,
+      estimated: false,
     });
   }
 
@@ -214,6 +304,30 @@ const mapFoodSummary = (food) => {
     sugarG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.sugarG),
   };
   const portionOptions = mapFoodPortions(food);
+  const defaultPortionOption =
+    portionOptions.find((portion) => /whole|serving/i.test(asString(portion.label))) ||
+    portionOptions.find((portion) => asString(portion.label).toLowerCase() === "gram") ||
+    portionOptions[0] ||
+    null;
+  const defaultPortionFactor = defaultPortionOption ? Number(defaultPortionOption.gramWeight || 0) / 100 : 0;
+  const display = {
+    caloriesKcal:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.caloriesKcal))
+        ? round(Number(nutrients.caloriesKcal) * defaultPortionFactor, 1)
+        : null,
+    proteinG:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.proteinG))
+        ? round(Number(nutrients.proteinG) * defaultPortionFactor, 1)
+        : null,
+    carbsG:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.carbsG))
+        ? round(Number(nutrients.carbsG) * defaultPortionFactor, 1)
+        : null,
+    fatG:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.fatG))
+        ? round(Number(nutrients.fatG) * defaultPortionFactor, 1)
+        : null,
+  };
 
   return {
     fdcId: food.fdcId,
@@ -221,12 +335,18 @@ const mapFoodSummary = (food) => {
     dataType: food.dataType || "",
     brandName: food.brandName || "",
     brandOwner: food.brandOwner || "",
-    foodCategory: food.foodCategory || "",
+    foodCategory:
+      (typeof food.foodCategory === "string" && food.foodCategory) ||
+      food.foodCategory?.description ||
+      food.brandedFoodCategory ||
+      "",
     servingSize: food.servingSize ?? null,
     servingSizeUnit: food.servingSizeUnit || "",
     nutrients,
     nutrientsPer100g: nutrients,
     portionOptions,
+    defaultPortionOption,
+    display,
   };
 };
 
@@ -715,6 +835,7 @@ const buildNutritionDiaryResponse = (date, entries, options = {}) => {
   const meals = DIARY_MEAL_TYPES.map((mealType) => {
     const mealEntries = entries.filter((entry) => entry.mealType === mealType);
     const mealTotals = buildNutritionTotals(mealEntries);
+    const mealMacroPercentages = buildMacroPercentages(mealTotals);
     const recommendation = buildMealCalorieRecommendation(mealType, mealTotals, targets?.calories || null);
 
     return {
@@ -722,6 +843,7 @@ const buildNutritionDiaryResponse = (date, entries, options = {}) => {
       mealLabel: DIARY_MEAL_LABELS[mealType],
       totalEntries: mealEntries.length,
       totals: mealTotals,
+      macroPercentages: mealMacroPercentages,
       recommendation,
       entries: mealEntries.map(toNutritionEntryResponse),
     };
@@ -741,6 +863,7 @@ const buildNutritionDiaryResponse = (date, entries, options = {}) => {
       mealLabel: meal.mealLabel,
       recommendation: meal.recommendation,
       totals: meal.totals,
+      macroPercentages: meal.macroPercentages,
     })),
     entries: entries.map(toNutritionEntryResponse),
   };
