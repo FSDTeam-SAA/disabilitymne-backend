@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import { verifyAccessToken } from "../utils/authToken.js";
 import { User } from "../models/user.model.js";
+import { getSocketCorsOptions } from "../config/cors.js";
 
 let ioInstance = null;
 
@@ -11,16 +12,6 @@ const asString = (value) => {
 
 const toUserRoom = (userId) => `user:${asString(userId)}`;
 const toThreadRoom = (threadId) => `thread:${asString(threadId)}`;
-
-const getCorsConfig = () => {
-  const origin = process.env.CORS_ORIGIN || "*";
-
-  return {
-    origin: origin === "*" ? "*" : origin.split(",").map((item) => item.trim()),
-    credentials: origin === "*" ? false : true,
-    methods: ["GET", "POST"],
-  };
-};
 
 const extractAccessToken = (socket) => {
   const authToken = asString(socket.handshake?.auth?.token);
@@ -43,7 +34,7 @@ export const initChatSocket = (httpServer) => {
   if (ioInstance) return ioInstance;
 
   ioInstance = new Server(httpServer, {
-    cors: getCorsConfig(),
+    cors: getSocketCorsOptions(),
   });
 
   ioInstance.use(async (socket, next) => {

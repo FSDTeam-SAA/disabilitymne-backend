@@ -24,6 +24,12 @@ cp .env.example .env
 npm run dev
 ```
 
+Set `CORS_ORIGIN` in `.env` (and on Render) to include your frontend origin(s), for example:
+
+```env
+CORS_ORIGIN=http://localhost:3000,https://disabilitymne-admin-dashboard.vercel.app,https://*.vercel.app
+```
+
 Configure SMTP values in `.env` if you want password-reset OTP emails and payment receipts to be sent:
 
 ```env

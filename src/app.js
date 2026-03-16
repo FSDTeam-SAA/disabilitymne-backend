@@ -7,6 +7,7 @@ import hpp from "hpp";
 
 import { notFound } from "./middlewares/notFound.js";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler.js";
+import { buildCorsOptions } from "./config/cors.js";
 
 import uploadRoutes from "./routes/upload.routes.js";
 import authRoutes from "./routes/auth.routes.js";
@@ -37,18 +38,9 @@ app.use(
 );
 app.use(express.urlencoded({ extended: true }));
 
-/**
- * CORS (credentials-safe)
- * NOTE: If you need cookies / auth, set credentials:true and origin to a specific value, not "*".
- */
-const origin = process.env.CORS_ORIGIN || "*";
-app.use(
-  cors({
-    origin: origin === "*" ? "*" : origin.split(",").map((s) => s.trim()),
-    credentials: origin === "*" ? false : true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  })
-);
+const corsOptions = buildCorsOptions();
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 if (process.env.NODE_ENV !== "production") {
   app.use(morgan("dev"));
