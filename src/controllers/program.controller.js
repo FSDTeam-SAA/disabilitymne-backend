@@ -412,9 +412,7 @@ const resolveExerciseExecutionMode = (executionMode, sets) => {
 
   const normalizedSets = Array.isArray(sets) ? sets : [];
   const hasDuration = normalizedSets.some((set) => set.durationSeconds !== undefined);
-  const hasReps = normalizedSets.some((set) => set.reps !== undefined);
-
-  if (hasDuration && !hasReps) {
+  if (hasDuration) {
     return "countdown";
   }
 
@@ -450,7 +448,7 @@ const mapExerciseFromLibrary = (exercise, index) => {
     defaultSets,
     executionMode,
     sets: defaultSets.length,
-    reps: isCountdown ? null : primarySet?.reps ?? null,
+    reps: primarySet?.reps ?? null,
     countdown: isCountdown,
     weightKg: primarySet?.weightKg ?? 1,
     durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
@@ -499,7 +497,7 @@ const mapLegacyExercise = (exercise) => {
     defaultSets,
     executionMode,
     sets: defaultSets.length,
-    reps: isCountdown ? null : primarySet?.reps ?? null,
+    reps: primarySet?.reps ?? null,
     countdown: isCountdown,
     weightKg: primarySet?.weightKg ?? 1,
     durationSeconds: isCountdown ? primarySet?.durationSeconds ?? fallbackDuration : null,
@@ -609,7 +607,7 @@ const withEffectiveExerciseSets = (exercise, userSettingsMap) => {
     effectiveSets,
     hasCustomSettings: customSets.length > 0,
     sets: effectiveSets.length,
-    reps: isCountdown ? null : primarySet?.reps ?? null,
+    reps: primarySet?.reps ?? null,
     countdown: isCountdown,
     weightKg: primarySet?.weightKg ?? 1,
     durationSeconds: isCountdown ? primarySet?.durationSeconds ?? exercise.durationSeconds ?? null : null,

@@ -865,7 +865,7 @@
                 }
               ]
             },
-            "description": "Get resolved config for one exercise for the current user. Response includes executionMode, countdown (boolean), durationSeconds (number for countdown mode), defaultSets, customSets, effectiveSets, hasCustomSettings."
+            "description": "Get resolved config for one exercise for the current user. Response includes executionMode, countdown (boolean), durationSeconds (countdown value), reps (may be present in countdown mode), defaultSets, customSets, effectiveSets, and hasCustomSettings."
           }
         },
         {
@@ -891,14 +891,47 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"customSets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"weightKg\": 1\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"weightKg\": 1.5\n    }\n  ]\n}",
+              "raw": "{\n  \"customSets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 12,\n      \"weightKg\": 8\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 10,\n      \"weightKg\": 8\n    }\n  ]\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Save per-user override for one exercise. Custom sets must follow the same mode as admin defaults: set_reps uses reps only, countdown uses durationSeconds only. weightKg defaults to 1 when omitted."
+            "description": "Save per-user override for one exercise. customSets must follow admin executionMode: set_reps requires reps and no durationSeconds; countdown requires durationSeconds and can optionally include reps. weightKg defaults to 1 when omitted."
+          }
+        },
+        {
+          "name": "Exercise Settings Screen - Save My Custom Settings (Countdown + Reps)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/users/me/exercises/{{exerciseId}}/settings",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Countdown override example for workout-ready screen: durationSeconds is required; reps is optional but supported for per-set targets.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customSets\": [\n    {\n      \"setNumber\": 1,\n      \"reps\": 15,\n      \"durationSeconds\": 30\n    },\n    {\n      \"setNumber\": 2,\n      \"reps\": 15,\n      \"durationSeconds\": 30\n    },\n    {\n      \"setNumber\": 3,\n      \"reps\": 15,\n      \"durationSeconds\": 30\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -1067,7 +1100,7 @@
           }
         }
       ],
-      "description": "Frontend flow note: for workout execution UI use exercise settings endpoints and program detail effective sets. Program detail now returns per exercise: executionMode, countdown (boolean), durationSeconds (countdown value), defaultSets (admin), customSets (user), effectiveSets (resolved), hasCustomSettings."
+      "description": "Frontend flow note: for workout execution UI use exercise settings endpoints and program detail effective sets. Program detail now returns per exercise: executionMode, countdown (boolean), durationSeconds (countdown value), reps (can also be present in countdown mode), defaultSets (admin), customSets (user), effectiveSets (resolved), hasCustomSettings."
     },
     {
       "name": "Mobile App - Nutrition Screens",
@@ -1447,7 +1480,7 @@
                 }
               ]
             },
-            "description": "Primary endpoint for workout player. Use exercise.effectiveSets for UI inputs/timers/weights. Use exercise.countdown (boolean) to choose timer vs reps screen; when true, read exercise.durationSeconds."
+            "description": "Primary endpoint for workout player. Use exercise.effectiveSets for UI inputs/timers/weights. Use exercise.countdown (boolean) to choose timer vs reps screen; when true, read exercise.durationSeconds and reps (if provided)."
           },
           "event": [
             {
@@ -1618,7 +1651,7 @@
                 }
               ]
             },
-            "description": "Returns exercise metadata including admin defaultSets and quick summary fields: executionMode, countdown (boolean), reps (set_reps mode), durationSeconds (countdown mode), weightKg."
+            "description": "Returns exercise metadata including admin defaultSets and quick summary fields: executionMode, countdown (boolean), reps (set_reps mode and optional for countdown), durationSeconds (countdown mode), weightKg."
           }
         }
       ],
@@ -2993,7 +3026,7 @@
                 }
               ]
             },
-            "description": "Admin creates exercise and global defaults for everyone. Required mode: executionMode=set_reps (use reps) OR executionMode=countdown (use durationSeconds). Do not send reps and durationSeconds together. Response returns countdown as boolean."
+            "description": "Admin creates exercise and global defaults for everyone. Required mode: executionMode=set_reps (reps required, durationSeconds not allowed) OR executionMode=countdown (durationSeconds required, reps optional). Response returns countdown as boolean."
           },
           "event": [
             {
@@ -3099,7 +3132,7 @@
                 }
               ]
             },
-            "description": "Admin updates exercise and global default training values. Keep one mode only: set_reps (reps) or countdown (durationSeconds). Changes affect all users unless user has personal override."
+            "description": "Admin updates exercise and global default training values. Keep one mode only: set_reps (reps required, no durationSeconds) or countdown (durationSeconds required, reps optional). Changes affect all users unless user has personal override."
           }
         },
         {
@@ -3153,7 +3186,7 @@
           }
         }
       ],
-      "description": "Admin defines global defaults with executionMode (set_reps or countdown). API responses now return countdown as boolean for frontend mode switching; durationSeconds carries timer value for countdown mode."
+      "description": "Admin defines global defaults with executionMode (set_reps or countdown). API responses now return countdown as boolean for frontend mode switching; durationSeconds carries timer value for countdown mode, and reps can also be provided per set."
     },
     {
       "name": "Admin Dashboard - Subscription Plan Screens",

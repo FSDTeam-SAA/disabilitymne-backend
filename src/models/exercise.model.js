@@ -148,8 +148,7 @@ exerciseSchema.pre("validate", function preValidate(next) {
 
   if (!this.executionMode) {
     const hasDuration = this.defaultSets.some((set) => set.durationSeconds !== undefined && set.durationSeconds !== null);
-    const hasReps = this.defaultSets.some((set) => set.reps !== undefined && set.reps !== null);
-    this.executionMode = hasDuration && !hasReps ? "countdown" : "set_reps";
+    this.executionMode = hasDuration ? "countdown" : "set_reps";
   }
 
   if (this.userType === "all_user") {
