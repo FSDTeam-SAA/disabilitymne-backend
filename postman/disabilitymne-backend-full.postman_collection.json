@@ -1077,7 +1077,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/nutrition/diary?date=2026-03-02",
+            "url": "{{baseUrl}}/api/v1/nutrition/diary?date=2026-03-02&goal=maintenance&weightKg=80&proteinPerKg=1.8&carbsPerKg=2&fatPerKg=0.8",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -1087,7 +1087,27 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Returns totals, macroPercentages, macroProgress, targets, energy (eaten/burned/goal/remaining), meals[] and mealRecommendations[] for calculator screen."
+          }
+        },
+        {
+          "name": "Nutrition Screen - History (Recent Tracked)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/nutrition/history?mealType=breakfast&query=apple&page=1&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Returns paginated recent tracked entries. Use data.entries[] for history list and X-delete actions with entry id."
           }
         },
         {
@@ -1106,6 +1126,25 @@
                 }
               ]
             }
+          }
+        },
+        {
+          "name": "Nutrition Screen - Favorite Sections (Foods/Meals/Recipes)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/nutrition/favorites/sections?limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{mobileAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Returns data.foods[], data.meals[], data.recipes[] for Favorite tab sections."
           }
         },
         {
@@ -1159,7 +1198,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Includes nutrients, nutrientsPer100g, and portionOptions[] (label, gramWeight) for How much dropdown + live nutrition math."
           }
         },
         {
