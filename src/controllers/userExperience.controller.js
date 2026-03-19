@@ -212,9 +212,7 @@ const resolveExecutionMode = (executionMode, sets) => {
 
   const normalizedSets = Array.isArray(sets) ? sets : [];
   const hasDuration = normalizedSets.some((set) => set.durationSeconds !== undefined);
-  const hasReps = normalizedSets.some((set) => set.reps !== undefined);
-
-  if (hasDuration && !hasReps) {
+  if (hasDuration) {
     return "countdown";
   }
 
@@ -233,10 +231,6 @@ const validateSetsMatchExecutionMode = (sets, executionMode, fieldName = "custom
     if (executionMode === "countdown") {
       if (!hasDuration) {
         throw new AppError(`${fieldName}[${index}] must include durationSeconds in countdown mode.`, httpStatus.BAD_REQUEST);
-      }
-
-      if (hasReps) {
-        throw new AppError(`${fieldName}[${index}] cannot include reps in countdown mode.`, httpStatus.BAD_REQUEST);
       }
       continue;
     }
@@ -399,7 +393,7 @@ const toExerciseSettingsResponse = (exercise, customSets = []) => {
     customSets: normalizedCustomSets,
     effectiveSets,
     sets: effectiveSets.length,
-    reps: isCountdown ? null : primarySet?.reps ?? null,
+    reps: primarySet?.reps ?? null,
     countdown: isCountdown,
     durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
     weightKg: primarySet?.weightKg ?? 1,

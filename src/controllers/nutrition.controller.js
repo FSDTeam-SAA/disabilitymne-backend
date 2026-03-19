@@ -2,6 +2,7 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { NutritionEntry } from "../models/nutritionEntry.model.js";
+import { WorkoutLog } from "../models/workoutLog.model.js";
 
 const USDA_API_BASE = "https://api.nal.usda.gov/fdc/v1";
 const USDA_API_KEY =
@@ -39,6 +40,13 @@ const DIARY_MEAL_LABELS = {
   other: "Other",
 };
 const DIARY_SOURCE_SET = new Set(["manual", "usda"]);
+const MEAL_KCAL_DISTRIBUTION = {
+  breakfast: { min: 0.2, max: 0.3 },
+  lunch: { min: 0.25, max: 0.35 },
+  dinner: { min: 0.3, max: 0.4 },
+  snack: { min: 0.1, max: 0.2 },
+  other: { min: 0, max: 0.1 },
+};
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -66,6 +74,15 @@ const parseNumber = (value, fieldName, min = 0, required = false) => {
   return parsed;
 };
 
+const parseBoolean = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === "") {
+    return defaultValue;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+};
+
 const parseGoal = (value) => {
   const goal = asString(value).toLowerCase().replace(/\s+/g, "_");
   if (!goal) return "maintenance";
@@ -84,15 +101,19 @@ const toKg = (measurement) => {
   return null;
 };
 
-const resolveWeightKg = (req) => {
-  const weightKgInput = parseNumber(req.body.weightKg, "weightKg", 1, false);
+const resolveWeightKgFromSource = (source, user, required = true) => {
+  const weightKgInput = parseNumber(source.weightKg, "weightKg", 1, false);
   if (weightKgInput !== undefined) return weightKgInput;
 
-  const useGoalWeight = String(req.body.useGoalWeight || "false").toLowerCase() === "true";
-  const profileWeight = useGoalWeight ? toKg(req.user.goalWeight) : toKg(req.user.weightCurrent);
+  const useGoalWeight = parseBoolean(source.useGoalWeight, false);
+  const profileWeight = useGoalWeight ? toKg(user?.goalWeight) : toKg(user?.weightCurrent);
 
   if (profileWeight && profileWeight > 0) {
     return profileWeight;
+  }
+
+  if (!required) {
+    return null;
   }
 
   throw new AppError(
@@ -106,11 +127,11 @@ const findNutrientValue = (foodNutrients, aliases) => {
 
   const aliasSet = new Set(aliases.map((alias) => String(alias).toLowerCase()));
   for (const nutrient of foodNutrients) {
-    const nutrientId = String(nutrient.nutrientId || "").toLowerCase();
-    const nutrientNumber = String(nutrient.nutrientNumber || "").toLowerCase();
-    const nutrientName = String(nutrient.nutrientName || "").toLowerCase();
+    const nutrientId = String(nutrient.nutrientId || nutrient.nutrient?.id || "").toLowerCase();
+    const nutrientNumber = String(nutrient.nutrientNumber || nutrient.nutrient?.number || "").toLowerCase();
+    const nutrientName = String(nutrient.nutrientName || nutrient.nutrient?.name || "").toLowerCase();
     if (aliasSet.has(nutrientId) || aliasSet.has(nutrientNumber) || aliasSet.has(nutrientName)) {
-      const value = Number(nutrient.value);
+      const value = Number(nutrient.value ?? nutrient.amount);
       if (Number.isFinite(value)) return value;
     }
   }
@@ -118,8 +139,195 @@ const findNutrientValue = (foodNutrients, aliases) => {
   return null;
 };
 
+const toFiniteNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const toPortionLabel = (portion = {}) => {
+  const amount = toFiniteNumber(portion.amount);
+  const measureUnit = asString(portion.measureUnit?.name || portion.measureUnit?.abbreviation || portion.measureUnitName);
+  const modifier = asString(portion.modifier || portion.portionDescription);
+  const parts = [];
+
+  if (amount && amount !== 1) {
+    parts.push(String(amount));
+  }
+  if (measureUnit) {
+    parts.push(measureUnit);
+  }
+  if (modifier) {
+    parts.push(modifier);
+  }
+
+  return parts.join(" ").trim() || "Serving";
+};
+
+const convertToGrams = (value, unit) => {
+  const amount = toFiniteNumber(value);
+  if (!amount || amount <= 0) return null;
+
+  const normalized = asString(unit).toLowerCase();
+  if (["g", "gram", "grams"].includes(normalized)) return amount;
+  if (["oz", "onz", "ounce", "ounces"].includes(normalized)) return amount * 28.3495;
+  if (["ml", "milliliter", "milliliters"].includes(normalized)) return amount;
+
+  return null;
+};
+
+const upsertPortionOption = (list, option) => {
+  if (!option || !option.label || !Number.isFinite(Number(option.gramWeight))) return;
+  const gramWeight = round(Number(option.gramWeight), 1);
+  if (gramWeight <= 0) return;
+
+  const key = `${option.label.toLowerCase()}|${gramWeight}`;
+  if (list.some((item) => `${item.label.toLowerCase()}|${item.gramWeight}` === key)) return;
+
+  list.push({
+    id: option.id ?? null,
+    label: option.label,
+    amount: Number.isFinite(Number(option.amount)) ? Number(option.amount) : 1,
+    gramWeight,
+    estimated: Boolean(option.estimated),
+  });
+};
+
+const mapFoodPortions = (food = {}) => {
+  const portions = Array.isArray(food.foodPortions) ? food.foodPortions : [];
+  const mapped = portions.reduce((acc, portion) => {
+      const gramWeight = toFiniteNumber(portion.gramWeight);
+      if (!gramWeight || gramWeight <= 0) {
+        return acc;
+      }
+
+      acc.push({
+        id: portion.id ?? null,
+        label: toPortionLabel(portion),
+        amount: toFiniteNumber(portion.amount) || 1,
+        gramWeight: round(gramWeight, 1),
+      });
+
+      return acc;
+    }, []);
+
+  const servingGramWeight = convertToGrams(food.servingSize, food.servingSizeUnit);
+  if (servingGramWeight) {
+    const householdLabel = asString(food.householdServingFullText);
+    const servingLabel = householdLabel ? `Serving (${householdLabel})` : "Serving";
+    upsertPortionOption(mapped, {
+      label: servingLabel,
+      gramWeight: servingGramWeight,
+      amount: 1,
+    });
+    upsertPortionOption(mapped, {
+      label: "Half serving",
+      gramWeight: servingGramWeight / 2,
+      amount: 0.5,
+    });
+  }
+
+  const householdText = asString(food.householdServingFullText);
+  const householdMatch = householdText.match(/([0-9]+(?:\\.[0-9]+)?)\\s*(oz|onz|ounce|ounces)\\b/i);
+  if (!servingGramWeight && householdMatch) {
+    const gramsFromOz = convertToGrams(Number(householdMatch[1]), householdMatch[2]);
+    if (gramsFromOz) {
+      upsertPortionOption(mapped, {
+        label: `Serving (${householdText})`,
+        gramWeight: gramsFromOz,
+        amount: 1,
+      });
+    }
+  }
+
+  const descriptor = `${asString(food.description)} ${asString(
+    typeof food.foodCategory === "string" ? food.foodCategory : food.foodCategory?.description || food.brandedFoodCategory
+  )}`.toLowerCase();
+
+  if (servingGramWeight && /\b(apple|banana|orange|pear|peach|mango|avocado)\b/.test(descriptor)) {
+    upsertPortionOption(mapped, {
+      label: "Whole",
+      gramWeight: servingGramWeight,
+      estimated: true,
+    });
+    upsertPortionOption(mapped, {
+      label: "Half",
+      gramWeight: servingGramWeight / 2,
+      amount: 0.5,
+      estimated: true,
+    });
+    upsertPortionOption(mapped, {
+      label: "Slice",
+      gramWeight: servingGramWeight / 10,
+      estimated: true,
+    });
+  }
+
+  if (/\b(spread|peanut butter|butter|sauce|syrup|honey|oil)\b/.test(descriptor)) {
+    upsertPortionOption(mapped, {
+      label: "Tablespoon",
+      gramWeight: 15,
+      estimated: true,
+    });
+    upsertPortionOption(mapped, {
+      label: "Teaspoon",
+      gramWeight: 5,
+      estimated: true,
+    });
+  }
+
+  const result = [];
+  for (const portion of mapped) {
+    upsertPortionOption(result, portion);
+  }
+
+  if (!result.some((portion) => portion.label.toLowerCase() === "gram" && portion.gramWeight === 1)) {
+    result.push({
+      id: null,
+      label: "Gram",
+      amount: 1,
+      gramWeight: 1,
+      estimated: false,
+    });
+  }
+
+  return result.slice(0, 30);
+};
+
 const mapFoodSummary = (food) => {
   const foodNutrients = Array.isArray(food.foodNutrients) ? food.foodNutrients : [];
+  const nutrients = {
+    caloriesKcal: findNutrientValue(foodNutrients, NUTRIENT_KEYS.caloriesKcal),
+    proteinG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.proteinG),
+    carbsG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.carbsG),
+    fatG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.fatG),
+    fiberG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.fiberG),
+    sugarG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.sugarG),
+  };
+  const portionOptions = mapFoodPortions(food);
+  const defaultPortionOption =
+    portionOptions.find((portion) => /whole|serving/i.test(asString(portion.label))) ||
+    portionOptions.find((portion) => asString(portion.label).toLowerCase() === "gram") ||
+    portionOptions[0] ||
+    null;
+  const defaultPortionFactor = defaultPortionOption ? Number(defaultPortionOption.gramWeight || 0) / 100 : 0;
+  const display = {
+    caloriesKcal:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.caloriesKcal))
+        ? round(Number(nutrients.caloriesKcal) * defaultPortionFactor, 1)
+        : null,
+    proteinG:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.proteinG))
+        ? round(Number(nutrients.proteinG) * defaultPortionFactor, 1)
+        : null,
+    carbsG:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.carbsG))
+        ? round(Number(nutrients.carbsG) * defaultPortionFactor, 1)
+        : null,
+    fatG:
+      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.fatG))
+        ? round(Number(nutrients.fatG) * defaultPortionFactor, 1)
+        : null,
+  };
 
   return {
     fdcId: food.fdcId,
@@ -127,17 +335,18 @@ const mapFoodSummary = (food) => {
     dataType: food.dataType || "",
     brandName: food.brandName || "",
     brandOwner: food.brandOwner || "",
-    foodCategory: food.foodCategory || "",
+    foodCategory:
+      (typeof food.foodCategory === "string" && food.foodCategory) ||
+      food.foodCategory?.description ||
+      food.brandedFoodCategory ||
+      "",
     servingSize: food.servingSize ?? null,
     servingSizeUnit: food.servingSizeUnit || "",
-    nutrients: {
-      caloriesKcal: findNutrientValue(foodNutrients, NUTRIENT_KEYS.caloriesKcal),
-      proteinG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.proteinG),
-      carbsG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.carbsG),
-      fatG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.fatG),
-      fiberG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.fiberG),
-      sugarG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.sugarG),
-    },
+    nutrients,
+    nutrientsPer100g: nutrients,
+    portionOptions,
+    defaultPortionOption,
+    display,
   };
 };
 
@@ -239,6 +448,188 @@ const normalizeMealType = (value, required = true) => {
 
   return normalized;
 };
+
+const calculateMacroAndCalorieTargets = ({
+  weightKg,
+  goal,
+  proteinPerKg,
+  carbsPerKg,
+  fatPerKg,
+  caloriesPerKg,
+}) => {
+  const proteinG = round(weightKg * proteinPerKg, 1);
+  const carbsG = round(weightKg * carbsPerKg, 1);
+  const fatG = round(weightKg * fatPerKg, 1);
+
+  const proteinCalories = round(proteinG * 4, 1);
+  const carbsCalories = round(carbsG * 4, 1);
+  const fatCalories = round(fatG * 9, 1);
+  const macroCalories = round(proteinCalories + carbsCalories + fatCalories, 1);
+
+  const goalRange = GOAL_KCAL_RANGE[goal];
+  const minCalories = round(weightKg * goalRange.min, 0);
+  const maxCalories = round(weightKg * goalRange.max, 0);
+  const recommendedCalories =
+    caloriesPerKg !== undefined
+      ? round(weightKg * caloriesPerKg, 0)
+      : round(weightKg * ((goalRange.min + goalRange.max) / 2), 0);
+  const remainingCalories = round(recommendedCalories - macroCalories, 1);
+
+  return {
+    weightKg: round(weightKg, 2),
+    goal,
+    multipliers: {
+      proteinPerKg,
+      carbsPerKg,
+      fatPerKg,
+    },
+    macros: {
+      proteinG,
+      carbsG,
+      fatG,
+    },
+    calories: {
+      proteinCalories,
+      carbsCalories,
+      fatCalories,
+      macroCalories,
+      recommendedCalories,
+      minCalories,
+      maxCalories,
+      remainingCalories,
+    },
+  };
+};
+
+const resolveTargetSummaryFromSource = (source, user, { weightRequired = false } = {}) => {
+  const weightKg = resolveWeightKgFromSource(source, user, weightRequired);
+  if (!weightKg) {
+    return null;
+  }
+
+  const goal = parseGoal(source.goal);
+  const proteinPerKg = parseNumber(source.proteinPerKg, "proteinPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.protein;
+  const carbsPerKg = parseNumber(source.carbsPerKg, "carbsPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.carbs;
+  const fatPerKg = parseNumber(source.fatPerKg, "fatPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.fat;
+  const caloriesPerKg = parseNumber(source.caloriesPerKg, "caloriesPerKg", 1, false);
+
+  return calculateMacroAndCalorieTargets({
+    weightKg,
+    goal,
+    proteinPerKg,
+    carbsPerKg,
+    fatPerKg,
+    caloriesPerKg,
+  });
+};
+
+const buildMacroProgress = (totals, targetMacros = null) => {
+  const defineMacroProgress = (consumedG, targetG) => {
+    if (!Number.isFinite(targetG) || targetG <= 0) {
+      return {
+        consumedG: round(consumedG, 1),
+        targetG: null,
+        remainingG: null,
+        progressPercent: null,
+      };
+    }
+
+    return {
+      consumedG: round(consumedG, 1),
+      targetG: round(targetG, 1),
+      remainingG: round(targetG - consumedG, 1),
+      progressPercent: round((consumedG / targetG) * 100, 1),
+    };
+  };
+
+  return {
+    carbs: defineMacroProgress(Number(totals.carbsG || 0), Number(targetMacros?.carbsG)),
+    protein: defineMacroProgress(Number(totals.proteinG || 0), Number(targetMacros?.proteinG)),
+    fat: defineMacroProgress(Number(totals.fatG || 0), Number(targetMacros?.fatG)),
+  };
+};
+
+const buildEnergySummary = (totals, calorieTargets = null, burnedKcal = 0) => {
+  const eatenKcal = round(Number(totals.caloriesKcal || 0), 1);
+  const caloriesBurned = round(Number(burnedKcal || 0), 1);
+  const netKcal = round(eatenKcal - caloriesBurned, 1);
+  const goalKcal = Number.isFinite(Number(calorieTargets?.recommendedCalories))
+    ? round(Number(calorieTargets.recommendedCalories), 1)
+    : null;
+  const remainingKcal = goalKcal === null ? null : round(goalKcal - netKcal, 1);
+
+  let status = "unknown";
+  if (remainingKcal !== null) {
+    status = remainingKcal >= 0 ? "under" : "over";
+  }
+
+  return {
+    eatenKcal,
+    burnedKcal: caloriesBurned,
+    netKcal,
+    goalKcal,
+    remainingKcal,
+    status,
+  };
+};
+
+const buildMealCalorieRecommendation = (mealType, mealTotals, calorieTargets = null) => {
+  if (!calorieTargets) return null;
+
+  const distribution = MEAL_KCAL_DISTRIBUTION[mealType] || MEAL_KCAL_DISTRIBUTION.other;
+  const minBase = Number.isFinite(Number(calorieTargets.minCalories))
+    ? Number(calorieTargets.minCalories)
+    : Number(calorieTargets.recommendedCalories || 0);
+  const maxBase = Number.isFinite(Number(calorieTargets.maxCalories))
+    ? Number(calorieTargets.maxCalories)
+    : Number(calorieTargets.recommendedCalories || 0);
+
+  const minKcal = round(minBase * distribution.min, 0);
+  const maxKcal = round(maxBase * distribution.max, 0);
+  const eatenKcal = round(Number(mealTotals.caloriesKcal || 0), 1);
+
+  return {
+    recommendedCalories: {
+      minKcal,
+      maxKcal,
+    },
+    eatenKcal,
+    remainingCalories: {
+      toMinKcal: round(minKcal - eatenKcal, 1),
+      toMaxKcal: round(maxKcal - eatenKcal, 1),
+    },
+  };
+};
+
+const getDayRange = (dateValue) => {
+  const start = new Date(dateValue);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+};
+
+const getBurnedCaloriesForDate = async (userId, dateValue) => {
+  const { start, end } = getDayRange(dateValue);
+  const [aggregate] = await WorkoutLog.aggregate([
+    {
+      $match: {
+        user: userId,
+        completedAt: { $gte: start, $lt: end },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        caloriesBurned: { $sum: "$caloriesBurned" },
+      },
+    },
+  ]);
+
+  return round(Number(aggregate?.caloriesBurned || 0), 1);
+};
+
+const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const buildNutritionTotals = (entries = []) =>
   entries.reduce(
@@ -434,15 +825,26 @@ const getOwnedNutritionEntry = async (entryId, userId) => {
   return entry;
 };
 
-const buildNutritionDiaryResponse = (date, entries) => {
+const buildNutritionDiaryResponse = (date, entries, options = {}) => {
+  const targets = options.targets || null;
+  const burnedKcal = Number(options.burnedKcal || 0);
   const totals = buildNutritionTotals(entries);
+  const macroProgress = buildMacroProgress(totals, targets?.macros || null);
+  const energy = buildEnergySummary(totals, targets?.calories || null, burnedKcal);
+
   const meals = DIARY_MEAL_TYPES.map((mealType) => {
     const mealEntries = entries.filter((entry) => entry.mealType === mealType);
+    const mealTotals = buildNutritionTotals(mealEntries);
+    const mealMacroPercentages = buildMacroPercentages(mealTotals);
+    const recommendation = buildMealCalorieRecommendation(mealType, mealTotals, targets?.calories || null);
+
     return {
       mealType,
       mealLabel: DIARY_MEAL_LABELS[mealType],
       totalEntries: mealEntries.length,
-      totals: buildNutritionTotals(mealEntries),
+      totals: mealTotals,
+      macroPercentages: mealMacroPercentages,
+      recommendation,
       entries: mealEntries.map(toNutritionEntryResponse),
     };
   });
@@ -451,66 +853,29 @@ const buildNutritionDiaryResponse = (date, entries) => {
     date,
     totals,
     macroPercentages: buildMacroPercentages(totals),
+    macroProgress,
+    targets,
+    energy,
     totalEntries: entries.length,
     meals,
+    mealRecommendations: meals.map((meal) => ({
+      mealType: meal.mealType,
+      mealLabel: meal.mealLabel,
+      recommendation: meal.recommendation,
+      totals: meal.totals,
+      macroPercentages: meal.macroPercentages,
+    })),
     entries: entries.map(toNutritionEntryResponse),
   };
 };
 
 export const calculateMacroTargets = catchAsync(async (req, res) => {
-  const weightKg = resolveWeightKg(req);
-  const goal = parseGoal(req.body.goal);
-
-  const proteinPerKg = parseNumber(req.body.proteinPerKg, "proteinPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.protein;
-  const carbsPerKg = parseNumber(req.body.carbsPerKg, "carbsPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.carbs;
-  const fatPerKg = parseNumber(req.body.fatPerKg, "fatPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.fat;
-
-  const proteinG = round(weightKg * proteinPerKg, 1);
-  const carbsG = round(weightKg * carbsPerKg, 1);
-  const fatG = round(weightKg * fatPerKg, 1);
-
-  const proteinCalories = round(proteinG * 4, 1);
-  const carbsCalories = round(carbsG * 4, 1);
-  const fatCalories = round(fatG * 9, 1);
-  const macroCalories = round(proteinCalories + carbsCalories + fatCalories, 1);
-
-  const goalRange = GOAL_KCAL_RANGE[goal];
-  const minCalories = round(weightKg * goalRange.min, 0);
-  const maxCalories = round(weightKg * goalRange.max, 0);
-
-  const caloriesPerKg = parseNumber(req.body.caloriesPerKg, "caloriesPerKg", 1, false);
-  const recommendedCalories =
-    caloriesPerKg !== undefined
-      ? round(weightKg * caloriesPerKg, 0)
-      : round(weightKg * ((goalRange.min + goalRange.max) / 2), 0);
-
-  const remainingCalories = round(recommendedCalories - macroCalories, 1);
+  const summary = resolveTargetSummaryFromSource(req.body, req.user, { weightRequired: true });
 
   res.status(httpStatus.OK).json({
     success: true,
     data: {
-      weightKg: round(weightKg, 2),
-      goal,
-      multipliers: {
-        proteinPerKg,
-        carbsPerKg,
-        fatPerKg,
-      },
-      macros: {
-        proteinG,
-        carbsG,
-        fatG,
-      },
-      calories: {
-        proteinCalories,
-        carbsCalories,
-        fatCalories,
-        macroCalories,
-        recommendedCalories,
-        minCalories,
-        maxCalories,
-        remainingCalories,
-      },
+      ...summary,
       notes: {
         formula: "protein = weight*proteinPerKg, carbs = weight*carbsPerKg, fat = weight*fatPerKg",
       },
@@ -617,14 +982,65 @@ export const getFoodByFdcId = catchAsync(async (req, res) => {
 
 export const getNutritionDiary = catchAsync(async (req, res) => {
   const entryDate = normalizeDiaryDate(req.query.date || req.query.entryDate);
-  const entries = await NutritionEntry.find({
-    user: req.user._id,
-    entryDate,
-  }).sort({ mealType: 1, createdAt: 1 });
+  const [entries, burnedKcal] = await Promise.all([
+    NutritionEntry.find({
+      user: req.user._id,
+      entryDate,
+    }).sort({ mealType: 1, createdAt: 1 }),
+    getBurnedCaloriesForDate(req.user._id, entryDate),
+  ]);
+  const targets = resolveTargetSummaryFromSource(req.query, req.user, { weightRequired: false });
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: buildNutritionDiaryResponse(entryDate, entries),
+    data: buildNutritionDiaryResponse(entryDate, entries, {
+      targets,
+      burnedKcal,
+    }),
+  });
+});
+
+export const getNutritionHistory = catchAsync(async (req, res) => {
+  const page = parseNumber(req.query.page, "page", 1, false) ?? 1;
+  const limit = parseNumber(req.query.limit, "limit", 1, false) ?? 20;
+  const safePage = Math.max(Math.floor(page), 1);
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+  const skip = (safePage - 1) * safeLimit;
+
+  const filter = {
+    user: req.user._id,
+  };
+
+  const mealTypeQuery = asString(req.query.mealType);
+  if (mealTypeQuery) {
+    filter.mealType = normalizeMealType(mealTypeQuery);
+  }
+
+  const queryText = asString(req.query.query || req.query.q);
+  if (queryText) {
+    filter.foodName = {
+      $regex: escapeRegex(queryText),
+      $options: "i",
+    };
+  }
+
+  const [entries, total] = await Promise.all([
+    NutritionEntry.find(filter)
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(safeLimit),
+    NutritionEntry.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: {
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages: Math.ceil(total / safeLimit),
+      entries: entries.map(toNutritionEntryResponse),
+    },
   });
 });
 
@@ -641,6 +1057,26 @@ export const getNutritionFavorites = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     data: entries.map(toNutritionEntryResponse),
+  });
+});
+
+export const getNutritionFavoriteSections = catchAsync(async (req, res) => {
+  const limit = parseNumber(req.query.limit, "limit", 1, false) ?? 20;
+  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
+  const foods = await NutritionEntry.find({
+    user: req.user._id,
+    isFavorite: true,
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(safeLimit);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: {
+      foods: foods.map(toNutritionEntryResponse),
+      meals: [],
+      recipes: [],
+    },
   });
 });
 

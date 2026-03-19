@@ -29,7 +29,7 @@ Implementation:
 - Creates exercise with global training defaults.
 - You must choose one mode only:
   a) set_reps mode: executionMode=set_reps with sets + reps (+ optional weightKg)
-  b) countdown mode: executionMode=countdown with sets + durationSeconds (+ optional weightKg)
+  b) countdown mode: executionMode=countdown with sets + durationSeconds (+ optional reps, optional weightKg)
 - Or send advanced field: defaultSets[] (all sets must follow one mode).
 - If weight is omitted, backend uses weightKg = 1 by default.
 - Supports multipart/form-data (images/videos).
@@ -103,7 +103,9 @@ Implementation:
 - Two payload options:
   1) customSets[] (advanced)
   2) setCount + reps OR durationSeconds + optional weightKg (simple)
-- Custom sets must follow the same executionMode as the admin exercise.
+- Custom sets must follow the same executionMode as the admin exercise:
+  - set_reps: reps required, durationSeconds not allowed
+  - countdown: durationSeconds required, reps optional
 - If weightKg omitted, backend defaults to 1.
 
 Body example (advanced):
@@ -155,6 +157,7 @@ Implementation for frontend:
   - executionMode
   - countdown (boolean) -> use this to choose timer vs reps screen
   - durationSeconds (countdown mode value)
+  - reps (can also be present in countdown mode)
   - defaultSets (admin)
   - customSets (user)
   - effectiveSets (resolved values to render inputs/timer/weight)
