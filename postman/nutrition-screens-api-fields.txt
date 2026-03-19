@@ -1,0 +1,224 @@
+NUTRITION SCREEN API + FIELD MAPPING (SEARCH -> CHOOSE -> UPDATE -> CALCULATOR)
+Generated: 2026-03-16
+
+Base Path:
+- /api/v1/nutrition
+
+Auth:
+- Authorization: Bearer {{mobileAccessToken}}
+
+=====================================================================
+1) SEARCH PAGE (left screen: list with + icon)
+=====================================================================
+
+API 1: Suggestions (optional for autocomplete)
+- GET {{baseUrl}}/api/v1/nutrition/foods/suggestions?q=apple&limit=10
+
+Response fields:
+- data[].label
+- data[].fdcId
+
+API 2: Search Results (main list cards)
+- GET {{baseUrl}}/api/v1/nutrition/foods/search?query=apple&page=1&pageSize=20
+
+Response fields for card:
+- data.foods[].fdcId
+- data.foods[].description
+- data.foods[].display.caloriesKcal   -> use as card kcal (default portion kcal)
+- data.foods[].defaultPortionOption.label
+- data.foods[].defaultPortionOption.gramWeight
+- data.foods[].portionOptions[]       -> fallback if you need more unit options
+- data.foods[].nutrientsPer100g       -> live calc later in detail screen
+
+Card subtitle format example:
+- "1 {{defaultPortionOption.label}} ({{defaultPortionOption.gramWeight}} g)"
+
+=====================================================================
+2) WHEN CHOOSE FOOD (middle-left screen)
+=====================================================================
+
+API: Food Details by fdcId
+- GET {{baseUrl}}/api/v1/nutrition/foods/{{fdcId}}
+
+Response fields:
+- data.fdcId
+- data.description
+- data.nutrientsPer100g.caloriesKcal
+- data.nutrientsPer100g.proteinG
+- data.nutrientsPer100g.carbsG
+- data.nutrientsPer100g.fatG
+- data.nutrientsPer100g.fiberG
+- data.nutrientsPer100g.sugarG
+- data.defaultPortionOption
+- data.portionOptions[]:
+  - label
+  - gramWeight
+  - estimated (boolean; true means fallback/estimated option)
+
+UI state fields:
+- quantity input -> local number
+- selected portion -> one item from portionOptions
+- mealType dropdown -> breakfast/lunch/dinner/snack/other
+
+Live calculation formula (frontend):
+- totalGrams = quantity * selectedPortion.gramWeight
+- calories = nutrientsPer100g.caloriesKcal * (totalGrams / 100)
+- protein  = nutrientsPer100g.proteinG      * (totalGrams / 100)
+- carbs    = nutrientsPer100g.carbsG        * (totalGrams / 100)
+- fat      = nutrientsPer100g.fatG          * (totalGrams / 100)
+
+=====================================================================
+3) "HOW MUCH" DROPDOWN (slice/half/whole/tablespoon/gram)
+=====================================================================
+
+Source:
+- GET /nutrition/foods/:fdcId -> data.portionOptions[]
+
+Handling rules:
+1) Use USDA-provided portions first.
+2) Use backend fallback options (Gram always, and Serving/Half/Whole/Slice/Tablespoon when detectable).
+3) If selected option has estimated=true, still usable but show "(estimated)" in UI if needed.
+4) If no suitable option, keep "Gram" + quantity input.
+
+Posting strategy for selected option:
+- quantity = user number (e.g., 2.5)
+- servingLabel = selectedOption.label (e.g., "Whole")
+- servingGrams = selectedOption.gramWeight (e.g., 125)
+- backend computes totalGrams automatically when totalGrams not sent
+
+=====================================================================
+4) TRACK FOOD (middle-left "Track" button)
+=====================================================================
+
+API:
+- POST {{baseUrl}}/api/v1/nutrition/diary/entries
+
+Required request fields:
+- date (or entryDate)
+- mealType
+- foodName
+- quantity
+- servingLabel
+
+Recommended request fields (for precise nutrition):
+- fdcId
+- source ("usda")
+- servingGrams
+- nutrientsPer100g { caloriesKcal, proteinG, carbsG, fatG, fiberG, sugarG }
+
+Optional:
+- totalGrams (if omitted, backend uses quantity * servingGrams)
+- isFavorite
+- notes
+
+Example payload:
+{
+  "date": "2026-03-02",
+  "mealType": "breakfast",
+  "foodName": "Apple",
+  "fdcId": 454004,
+  "source": "usda",
+  "quantity": 1,
+  "servingLabel": "Whole",
+  "servingGrams": 125,
+  "nutrientsPer100g": {
+    "caloriesKcal": 52,
+    "proteinG": 0.3,
+    "carbsG": 13.8,
+    "fatG": 0.2,
+    "fiberG": 2.4,
+    "sugarG": 10.4
+  },
+  "isFavorite": true
+}
+
+=====================================================================
+5) UPDATE FOOD (middle-right "Update" button)
+=====================================================================
+
+API:
+- PATCH {{baseUrl}}/api/v1/nutrition/diary/entries/{{nutritionEntryId}}
+
+Use same field names as POST:
+- mealType
+- quantity
+- servingLabel
+- servingGrams (or totalGrams)
+- nutrientsPer100g (optional but recommended if quantity/unit changes)
+- isFavorite
+- notes
+
+After PATCH:
+- call GET /nutrition/diary?date=... to refresh calculator/summary cards.
+
+=====================================================================
+6) CALCULATOR SUMMARY (right screen)
+=====================================================================
+
+API:
+- GET {{baseUrl}}/api/v1/nutrition/diary?date=YYYY-MM-DD
+Optional target query:
+- goal, weightKg, proteinPerKg, carbsPerKg, fatPerKg, caloriesPerKg
+
+Top ring / counters:
+- data.energy.eatenKcal
+- data.energy.burnedKcal
+- data.energy.goalKcal
+- data.energy.remainingKcal
+
+Selected meal block:
+- data.meals[] filtered by mealType
+- meal.entries[] for listed foods
+- meal.totals.caloriesKcal
+- meal.recommendation.recommendedCalories.minKcal
+- meal.recommendation.recommendedCalories.maxKcal
+- meal.recommendation.remainingCalories.toMinKcal
+- meal.recommendation.remainingCalories.toMaxKcal
+- meal.macroPercentages.carbsPercent
+- meal.macroPercentages.proteinPercent
+- meal.macroPercentages.fatPercent
+
+Daily macro cards:
+- data.macroProgress.carbs
+- data.macroProgress.protein
+- data.macroProgress.fat
+
+=====================================================================
+7) SUPPORT ROUTES USED IN THIS FLOW
+=====================================================================
+
+- GET /nutrition/diary/entries/:entryId          (load one tracked entry for edit)
+- DELETE /nutrition/diary/entries/:entryId       (remove food row)
+- GET /nutrition/history?mealType=...            (history tab list)
+- GET /nutrition/favorites?limit=...             (favorite tab list)
+
+=====================================================================
+8) IMPORTANT FIELD NAMES (SEND EXACT KEYS)
+=====================================================================
+
+Meal/entry:
+- date OR entryDate
+- mealType
+- foodName
+- fdcId
+- source
+- quantity
+- servingLabel
+- servingGrams
+- totalGrams
+- nutrientsPer100g
+- isFavorite
+- notes
+
+Nutrients object keys:
+- caloriesKcal
+- proteinG
+- carbsG
+- fatG
+- fiberG
+- sugarG
+
+Portion option keys:
+- label
+- gramWeight
+- estimated

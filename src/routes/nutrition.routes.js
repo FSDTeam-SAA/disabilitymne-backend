@@ -6,7 +6,9 @@ import {
   deleteNutritionDiaryEntry,
   getNutritionDiary,
   getNutritionDiaryEntryById,
+  getNutritionFavoriteSections,
   getNutritionFavorites,
+  getNutritionHistory,
   getFoodByFdcId,
   getFoodSuggestions,
   searchFoods,
@@ -22,6 +24,8 @@ router.get("/foods/search", searchFoods);
 router.get("/foods/suggestions", getFoodSuggestions);
 router.get("/foods/:fdcId", getFoodByFdcId);
 router.get("/diary", getNutritionDiary);
+router.get("/history", getNutritionHistory);
+router.get("/favorites/sections", getNutritionFavoriteSections);
 router.get("/favorites", getNutritionFavorites);
 router.post("/diary/entries", createNutritionDiaryEntry);
 router.get("/diary/entries/:entryId", getNutritionDiaryEntryById);

@@ -202,6 +202,24 @@ Flutter WebView flow (webhook-first, no custom success/cancel URL needed from ap
 - `recipeImages` (URL/object payloads)
 - `ingredients` array
 
+## Nutrition APIs (Mobile Screens)
+
+- `POST /api/v1/nutrition/calculator/macro-targets`
+- `GET /api/v1/nutrition/foods/suggestions?q=app&limit=10`
+- `GET /api/v1/nutrition/foods/search?query=apple&page=1&pageSize=20`
+- `GET /api/v1/nutrition/foods/:fdcId` (includes `portionOptions` + nutrient summary)
+- `GET /api/v1/nutrition/diary?date=YYYY-MM-DD` (includes `energy`, `macroProgress`, `mealRecommendations`)
+- `GET /api/v1/nutrition/history?mealType=breakfast&limit=20&page=1`
+- `GET /api/v1/nutrition/favorites/sections?limit=20` (foods + meals + recipes buckets)
+- `GET /api/v1/nutrition/favorites?limit=20`
+- `POST /api/v1/nutrition/diary/entries`
+- `GET /api/v1/nutrition/diary/entries/:entryId`
+- `PATCH /api/v1/nutrition/diary/entries/:entryId`
+- `DELETE /api/v1/nutrition/diary/entries/:entryId`
+
+Detailed screen mapping for frontend handoff:
+- `docs/nutrition-figma-handoff.md`
+
 ## Admin Dashboard APIs (role: `admin`)
 
 - `GET /api/v1/admin/dashboard/overview` (totals, revenue series, subscription survey, recent users)
