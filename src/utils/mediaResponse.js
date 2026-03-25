@@ -1,7 +1,4 @@
-const asString = (value) => {
-  if (value === null || value === undefined) return "";
-  return String(value).trim();
-};
+import { toPublicMediaUrl } from "./publicMediaUrl.js";
 
 export const toMediaUrl = (value) => {
   if (!value) {
@@ -9,14 +6,14 @@ export const toMediaUrl = (value) => {
   }
 
   if (typeof value === "string") {
-    return asString(value) || null;
+    return toPublicMediaUrl(value) || null;
   }
 
   if (typeof value !== "object") {
     return null;
   }
 
-  return asString(value.url || value.path || value.secure_url) || null;
+  return toPublicMediaUrl(value.url || value.path || value.secure_url) || null;
 };
 
 export const toMediaUrlList = (values) => {

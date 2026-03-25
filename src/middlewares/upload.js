@@ -1,10 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import multer from "multer";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
-import { initCloudinary } from "../config/cloudinary.js";
 
-const cloudinary = initCloudinary();
 const IMAGE_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MEDIA_MAX_FILE_SIZE = 100 * 1024 * 1024;
+const uploadsRoot = path.join(process.cwd(), "uploads");
 
 const getUploadKind = (file) => {
   const mimetype = String(file?.mimetype || "").toLowerCase();
@@ -30,25 +30,54 @@ const buildFileFilter = (allowedKinds) => (req, file, cb) => {
   cb(null, true);
 };
 
-const createStorage = () =>
-  new CloudinaryStorage({
-    cloudinary,
-    params: async (req, file) => {
-      const folder = (req.body?.folder || "uploads").toString();
-      const resourceType = getUploadKind(file) || "image";
+const sanitizePathSegment = (segment) =>
+  String(segment || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "");
 
-      return {
-        folder,
-        resource_type: resourceType,
-        // keeps original filename but Cloudinary may still ensure uniqueness
-        public_id: `${Date.now()}-${file.originalname}`.replace(/\s+/g, "-"),
-      };
-    },
+const sanitizeFolder = (folder) => {
+  const normalized = String(folder || "general")
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((part) => sanitizePathSegment(part))
+    .filter(Boolean)
+    .join("/");
+
+  return normalized || "general";
+};
+
+const sanitizeFileName = (name) =>
+  String(name || "file")
+    .trim()
+    .replace(/(\.[^/.]+)+$/, "")
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "") || "file";
+
+const ensureDirectory = (dirPath, cb) => {
+  fs.mkdir(dirPath, { recursive: true }, (error) => {
+    if (error) return cb(error);
+    cb(null, dirPath);
   });
+};
+
+const diskStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const folder = sanitizeFolder(req.body?.folder || "general");
+    const destinationPath = path.join(uploadsRoot, folder);
+    ensureDirectory(destinationPath, cb);
+  },
+  filename: (req, file, cb) => {
+    const originalExt = path.extname(file.originalname || "").toLowerCase();
+    const safeName = sanitizeFileName(file.originalname);
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `${unique}-${safeName}${originalExt}`);
+  },
+});
 
 const createUploader = ({ allowedKinds, maxFileSize }) =>
   multer({
-    storage: createStorage(),
+    storage: diskStorage,
     fileFilter: buildFileFilter(allowedKinds),
     limits: { fileSize: maxFileSize },
   });

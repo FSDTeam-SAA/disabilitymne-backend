@@ -4,6 +4,8 @@ import cors from "cors";
 import helmet from "helmet";
 import mongoSanitize from "express-mongo-sanitize";
 import hpp from "hpp";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { notFound } from "./middlewares/notFound.js";
 import { globalErrorHandler } from "./middlewares/globalErrorHandler.js";
@@ -21,6 +23,8 @@ import nutritionRoutes from "./routes/nutrition.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /**
  * Core middlewares
@@ -51,6 +55,7 @@ if (process.env.NODE_ENV !== "production") {
  */
 app.use(mongoSanitize());
 app.use(hpp());
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /**
  * Health check

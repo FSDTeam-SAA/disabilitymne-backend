@@ -1,3 +1,5 @@
+import { toPublicMediaUrl } from "./publicMediaUrl.js";
+
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
@@ -8,7 +10,7 @@ export const toUploadedMediaAsset = (file) => {
     return null;
   }
 
-  const url = asString(file.path || file.secure_url);
+  const url = toPublicMediaUrl(file.path || file.secure_url || file.url);
   if (!url) {
     return null;
   }
