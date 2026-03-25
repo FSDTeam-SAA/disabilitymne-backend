@@ -11,6 +11,7 @@ import {
   getMyRecipes,
   getRecipeByIdForUser,
   listPremiumUsersForRecipes,
+  toggleRecipeFavorite,
   updateAdminRecipe,
 } from "../controllers/recipe.controller.js";
 
@@ -33,6 +34,7 @@ router.use("/admin", restrictTo("admin"), adminRouter);
 router.get("/explore", getExploreRecipes);
 router.get("/my", getMyRecipes);
 router.get("/all", getAllAccessibleRecipes);
+router.patch("/:recipeId/favorite", toggleRecipeFavorite);
 router.get("/:recipeId", getRecipeByIdForUser);
 
 export default router;

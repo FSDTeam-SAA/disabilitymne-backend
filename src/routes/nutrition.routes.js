@@ -3,6 +3,7 @@ import { protect } from "../middlewares/auth.js";
 import {
   calculateMacroTargets,
   createNutritionDiaryEntry,
+  deleteNutritionFavoriteMeal,
   deleteNutritionDiaryEntry,
   getNutritionDiary,
   getNutritionDiaryEntryById,
@@ -11,6 +12,7 @@ import {
   getNutritionHistory,
   getFoodByFdcId,
   getFoodSuggestions,
+  saveNutritionFavoriteMeal,
   searchFoods,
   updateNutritionDiaryEntry,
 } from "../controllers/nutrition.controller.js";
@@ -27,6 +29,8 @@ router.get("/diary", getNutritionDiary);
 router.get("/history", getNutritionHistory);
 router.get("/favorites/sections", getNutritionFavoriteSections);
 router.get("/favorites", getNutritionFavorites);
+router.post("/favorites/meals", saveNutritionFavoriteMeal);
+router.delete("/favorites/meals/:mealFavoriteId", deleteNutritionFavoriteMeal);
 router.post("/diary/entries", createNutritionDiaryEntry);
 router.get("/diary/entries/:entryId", getNutritionDiaryEntryById);
 router.patch("/diary/entries/:entryId", updateNutritionDiaryEntry);

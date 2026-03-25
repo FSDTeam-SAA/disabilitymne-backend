@@ -686,7 +686,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/users/me/progress",
+            "url": "{{baseUrl}}/api/v1/users/me/progress?tzOffsetMinutes={{tzOffsetMinutes}}",
             "auth": {
               "type": "bearer",
               "bearer": [
@@ -696,7 +696,8 @@
                   "type": "string"
                 }
               ]
-            }
+            },
+            "description": "Timezone-aware progress overview. Send device-local tzOffsetMinutes (for example 360 for UTC+06:00, -300 for UTC-05:00) so streaks and 7-day charts use the user's local day boundaries."
           }
         },
         {
@@ -3696,6 +3697,10 @@
     {
       "key": "mobileAccessToken",
       "value": ""
+    },
+    {
+      "key": "tzOffsetMinutes",
+      "value": "0"
     },
     {
       "key": "mobileRefreshToken",
