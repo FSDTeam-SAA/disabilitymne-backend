@@ -1,16 +1,23 @@
 import mongoose from "mongoose";
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import {
+  deleteCloudinaryMediaByPublicId,
+  uploadMediaFileToCloudinary,
+  uploadMediaUrlToCloudinary,
+} from "../services/cloudinary.service.js";
 import { Recipe } from "../models/recipe.model.js";
 import { User } from "../models/user.model.js";
 
 const RECIPE_USER_TYPES = new Set(["normal_user", "premium_user"]);
 const RECIPE_STATUSES = new Set(["draft", "published", "archived"]);
 const RECIPE_IMAGE_FIELDS = ["recipeImages", "recipeImage", "image"];
+const CLOUDINARY_RECIPE_IMAGE_FOLDER = "recipes/images";
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -45,6 +52,76 @@ const getField = (body, keys) => {
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const normalizeUploadedFiles = (files) => {
+  if (!files) return {};
+
+  if (Array.isArray(files)) {
+    return files.reduce((acc, file) => {
+      const fieldName = asString(file?.fieldname);
+      if (!fieldName) return acc;
+
+      if (!acc[fieldName]) {
+        acc[fieldName] = [];
+      }
+
+      acc[fieldName].push(file);
+      return acc;
+    }, {});
+  }
+
+  return files;
+};
+
+const getUploadedFilesByFieldNames = (files, fieldNames = []) => {
+  const groupedFiles = normalizeUploadedFiles(files);
+  const uploadedFiles = [];
+
+  for (const fieldName of fieldNames) {
+    const fieldFiles = groupedFiles[fieldName];
+    if (Array.isArray(fieldFiles) && fieldFiles.length > 0) {
+      uploadedFiles.push(...fieldFiles);
+    }
+  }
+
+  return uploadedFiles;
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
+};
+
+const cleanupTemporaryUploads = async (files = []) => {
+  await Promise.all(files.map((file) => cleanupTemporaryUpload(file)));
+};
+
+const uploadImagesToCloudinary = async (files, folder, failureMessage) => {
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  try {
+    return await Promise.all(
+      files.map((file) =>
+        uploadMediaFileToCloudinary(file, {
+          folder,
+          resourceType: "image",
+        })
+      )
+    );
+  } catch (error) {
+    throw new AppError(asString(error?.message) || failureMessage, httpStatus.INTERNAL_SERVER_ERROR);
+  } finally {
+    await cleanupTemporaryUploads(files);
+  }
 };
 
 const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -194,6 +271,181 @@ const normalizeMediaList = (rawValue) => {
 
   const single = normalizeMediaAsset(value);
   return single ? [single] : [];
+};
+
+const extractCloudinaryMediaInfoFromUrl = (url) => {
+  const rawUrl = asString(url);
+  if (!rawUrl || !/res\.cloudinary\.com/i.test(rawUrl)) {
+    return { publicId: "", resourceType: "image" };
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const markerMatch = parsed.pathname.match(/\/(image|video)\/upload\//i);
+    if (!markerMatch || !markerMatch[0]) {
+      return { publicId: "", resourceType: "image" };
+    }
+
+    const resourceType = markerMatch[1]?.toLowerCase() === "video" ? "video" : "image";
+    const marker = markerMatch[0];
+    let publicIdPath = parsed.pathname.slice(parsed.pathname.indexOf(marker) + marker.length);
+
+    publicIdPath = publicIdPath.replace(/^v\d+\//, "");
+    publicIdPath = publicIdPath.replace(/\.[^/.]+$/, "");
+
+    return {
+      publicId: decodeURIComponent(publicIdPath),
+      resourceType,
+    };
+  } catch {
+    return { publicId: "", resourceType: "image" };
+  }
+};
+
+const getMediaAssetCloudinaryInfo = (asset) => {
+  const url = asString(asset?.url);
+  const parsedFromUrl = extractCloudinaryMediaInfoFromUrl(url);
+
+  return {
+    publicId: asString(asset?.publicId) || parsedFromUrl.publicId,
+    resourceType: "image",
+  };
+};
+
+const buildMediaAssetComparisonKey = (asset) => {
+  const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
+  if (cloudinaryInfo.publicId) {
+    return `public:${cloudinaryInfo.resourceType}:${cloudinaryInfo.publicId}`;
+  }
+
+  const url = asString(asset?.url);
+  if (url) {
+    return `url:${url}`;
+  }
+
+  return "";
+};
+
+const preserveExistingMediaMetadata = (nextAssets, existingAssets) => {
+  const normalizedNext = normalizeMediaList(nextAssets);
+  const normalizedExisting = normalizeMediaList(existingAssets);
+
+  const existingByUrl = new Map(
+    normalizedExisting
+      .map((asset) => [asString(asset.url), asset])
+      .filter(([url]) => Boolean(url))
+  );
+
+  return normalizedNext.map((asset) => {
+    const url = asString(asset.url);
+    const matchedExisting = existingByUrl.get(url);
+    const size = Number(asset.size);
+
+    if (!matchedExisting) {
+      return asset;
+    }
+
+    const existingSize = Number(matchedExisting.size);
+
+    return {
+      url,
+      publicId: asString(asset.publicId || matchedExisting.publicId),
+      mimetype: asString(asset.mimetype || matchedExisting.mimetype),
+      size:
+        Number.isFinite(size) && size > 0
+          ? size
+          : Number.isFinite(existingSize) && existingSize > 0
+            ? existingSize
+            : 0,
+    };
+  });
+};
+
+const resolveRemovedCloudinaryAssets = (previousAssets, nextAssets) => {
+  const previous = normalizeMediaList(previousAssets);
+  const next = normalizeMediaList(nextAssets);
+  const nextKeys = new Set(next.map((asset) => buildMediaAssetComparisonKey(asset)).filter(Boolean));
+  const removedAssets = [];
+
+  for (const previousAsset of previous) {
+    const key = buildMediaAssetComparisonKey(previousAsset);
+    if (!key || nextKeys.has(key)) {
+      continue;
+    }
+
+    const cloudinaryInfo = getMediaAssetCloudinaryInfo(previousAsset);
+    if (cloudinaryInfo.publicId) {
+      removedAssets.push(cloudinaryInfo);
+    }
+  }
+
+  return removedAssets;
+};
+
+const deleteCloudinaryAssets = async (assets = []) => {
+  const uniqueAssets = [];
+  const seen = new Set();
+
+  for (const asset of assets) {
+    const publicId = asString(asset?.publicId);
+    const resourceType = asString(asset?.resourceType).toLowerCase() === "video" ? "video" : "image";
+    if (!publicId) continue;
+
+    const key = `${resourceType}:${publicId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    uniqueAssets.push({ publicId, resourceType });
+  }
+
+  if (uniqueAssets.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(
+    uniqueAssets.map((asset) =>
+      deleteCloudinaryMediaByPublicId(asset.publicId, {
+        resourceType: asset.resourceType,
+      })
+    )
+  );
+};
+
+const isAbsoluteHttpUrl = (value) => /^https?:\/\//i.test(asString(value));
+
+const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) => {
+  const assets = normalizeMediaList(rawValue);
+  if (assets.length === 0) {
+    return assets;
+  }
+
+  const folder = asString(options.folder);
+  const failureMessage = asString(options.failureMessage) || "Failed to upload media URL to Cloudinary.";
+
+  try {
+    const converted = await Promise.all(
+      assets.map(async (asset) => {
+        const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
+        if (cloudinaryInfo.publicId || /res\.cloudinary\.com/i.test(asString(asset?.url))) {
+          return asset;
+        }
+
+        const sourceUrl = asString(asset?.url);
+        if (!isAbsoluteHttpUrl(sourceUrl)) {
+          return asset;
+        }
+
+        return uploadMediaUrlToCloudinary(sourceUrl, {
+          folder,
+          resourceType: "image",
+        });
+      })
+    );
+
+    return converted;
+  } catch (error) {
+    throw new AppError(asString(error?.message) || failureMessage, httpStatus.INTERNAL_SERVER_ERROR);
+  }
 };
 
 const normalizeIngredients = (rawValue) => {
@@ -463,7 +715,7 @@ const buildUpdatePayload = async (body, currentRecipe) => {
     if (recipeImages.length === 0) {
       throw new AppError("At least one recipe image is required.", httpStatus.BAD_REQUEST);
     }
-    updates.recipeImages = recipeImages;
+    updates.recipeImages = preserveExistingMediaMetadata(recipeImages, currentRecipe.recipeImages);
   }
 
   const caloriesInput = getField(parsedBody, ["caloriesKcal", "calories"]);
@@ -522,11 +774,36 @@ const buildUserAccessibleFilter = (user) => {
   return filter;
 };
 
-const getRecipeBodyFromRequest = (req) =>
-  mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "recipeImages", fieldNames: RECIPE_IMAGE_FIELDS }]);
+const getRecipeBodyFromRequest = async (req) => {
+  let payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "recipeImages", fieldNames: RECIPE_IMAGE_FIELDS }]);
+
+  const recipeImageFiles = getUploadedFilesByFieldNames(req.files, RECIPE_IMAGE_FIELDS);
+  if (recipeImageFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      recipeImages: await uploadImagesToCloudinary(
+        recipeImageFiles,
+        CLOUDINARY_RECIPE_IMAGE_FOLDER,
+        "Failed to upload recipe images to Cloudinary."
+      ),
+    };
+  }
+
+  if (Object.hasOwn(payload, "recipeImages")) {
+    payload = {
+      ...(payload || {}),
+      recipeImages: await convertMediaAssetsToCloudinaryIfNeeded(payload.recipeImages, {
+        folder: CLOUDINARY_RECIPE_IMAGE_FOLDER,
+        failureMessage: "Failed to migrate recipe images to Cloudinary.",
+      }),
+    };
+  }
+
+  return payload;
+};
 
 export const createRecipe = catchAsync(async (req, res) => {
-  const payload = await buildCreatePayload(getRecipeBodyFromRequest(req));
+  const payload = await buildCreatePayload(await getRecipeBodyFromRequest(req));
 
   const recipe = await Recipe.create({
     ...payload,
@@ -615,13 +892,17 @@ export const updateAdminRecipe = catchAsync(async (req, res) => {
     throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
   }
 
-  const updates = await buildUpdatePayload(getRecipeBodyFromRequest(req), recipe);
+  const previousRecipeImages = normalizeMediaList(recipe.recipeImages);
+  const updates = await buildUpdatePayload(await getRecipeBodyFromRequest(req), recipe);
   if (Object.keys(updates).length === 0) {
     throw new AppError("No valid fields were provided for update.", httpStatus.BAD_REQUEST);
   }
 
   Object.assign(recipe, updates, { updatedBy: req.user._id });
   await recipe.save();
+
+  const removedCloudinaryAssets = resolveRemovedCloudinaryAssets(previousRecipeImages, recipe.recipeImages);
+  await deleteCloudinaryAssets(removedCloudinaryAssets);
 
   const populated = await Recipe.findById(recipe._id).populate("assignedUser", "firstName email");
 
@@ -643,10 +924,16 @@ export const deleteAdminRecipe = catchAsync(async (req, res) => {
     throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
   }
 
+  const recipeCloudinaryAssets = normalizeMediaList(recipe.recipeImages)
+    .map((asset) => getMediaAssetCloudinaryInfo(asset))
+    .filter((asset) => asString(asset.publicId));
+
   recipe.isActive = false;
   recipe.status = "archived";
+  recipe.recipeImages = [];
   recipe.updatedBy = req.user._id;
   await recipe.save({ validateBeforeSave: false });
+  await deleteCloudinaryAssets(recipeCloudinaryAssets);
 
   res.status(httpStatus.OK).json({
     success: true,

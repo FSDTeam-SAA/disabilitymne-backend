@@ -1,10 +1,16 @@
 import mongoose from "mongoose";
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import {
+  deleteCloudinaryMediaByPublicId,
+  uploadMediaFileToCloudinary,
+  uploadMediaUrlToCloudinary,
+} from "../services/cloudinary.service.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { User } from "../models/user.model.js";
@@ -13,6 +19,9 @@ const EXERCISE_STATUSES = new Set(["draft", "published", "archived"]);
 const EXERCISE_IMAGE_FIELDS = ["exerciseImages", "exerciseImage", "image"];
 const TARGET_MUSCLE_IMAGE_FIELDS = ["targetMuscleImages", "targetMuscleImage", "muscleImages", "muscleImage"];
 const DEMO_VIDEO_FIELDS = ["demoVideos", "demoVideo", "exerciseVideo", "exerciseVideos", "video"];
+const CLOUDINARY_EXERCISE_IMAGE_FOLDER = "exercises/images";
+const CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER = "exercises/target-muscles";
+const CLOUDINARY_DEMO_VIDEO_FOLDER = "exercises/videos";
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -47,6 +56,80 @@ const getField = (body, keys) => {
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const normalizeUploadedFiles = (files) => {
+  if (!files) return {};
+
+  if (Array.isArray(files)) {
+    return files.reduce((acc, file) => {
+      const fieldName = asString(file?.fieldname);
+      if (!fieldName) return acc;
+
+      if (!acc[fieldName]) {
+        acc[fieldName] = [];
+      }
+
+      acc[fieldName].push(file);
+      return acc;
+    }, {});
+  }
+
+  return files;
+};
+
+const getUploadedFilesByFieldNames = (files, fieldNames = []) => {
+  const groupedFiles = normalizeUploadedFiles(files);
+  const uploadedFiles = [];
+
+  for (const fieldName of fieldNames) {
+    const fieldFiles = groupedFiles[fieldName];
+    if (Array.isArray(fieldFiles) && fieldFiles.length > 0) {
+      uploadedFiles.push(...fieldFiles);
+    }
+  }
+
+  return uploadedFiles;
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
+};
+
+const cleanupTemporaryUploads = async (files = []) => {
+  await Promise.all(files.map((file) => cleanupTemporaryUpload(file)));
+};
+
+const uploadMediaFilesToCloudinary = async (files, options = {}) => {
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  const folder = asString(options.folder);
+  const resourceType = asString(options.resourceType);
+  const failureMessage = asString(options.failureMessage) || "Failed to upload media to Cloudinary.";
+
+  try {
+    return await Promise.all(
+      files.map((file) =>
+        uploadMediaFileToCloudinary(file, {
+          folder,
+          resourceType,
+        })
+      )
+    );
+  } catch (error) {
+    throw new AppError(asString(error?.message) || failureMessage, httpStatus.INTERNAL_SERVER_ERROR);
+  } finally {
+    await cleanupTemporaryUploads(files);
+  }
 };
 
 const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -372,6 +455,190 @@ const normalizeMediaList = (rawValue) => {
 
   const single = normalizeMediaAsset(value);
   return single ? [single] : [];
+};
+
+const extractCloudinaryMediaInfoFromUrl = (url) => {
+  const rawUrl = asString(url);
+  if (!rawUrl || !/res\.cloudinary\.com/i.test(rawUrl)) {
+    return { publicId: "", resourceType: "image" };
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const markerMatch = parsed.pathname.match(/\/(image|video)\/upload\//i);
+    if (!markerMatch || !markerMatch[0]) {
+      return { publicId: "", resourceType: "image" };
+    }
+
+    const resourceType = markerMatch[1]?.toLowerCase() === "video" ? "video" : "image";
+    const marker = markerMatch[0];
+    let publicIdPath = parsed.pathname.slice(parsed.pathname.indexOf(marker) + marker.length);
+
+    publicIdPath = publicIdPath.replace(/^v\d+\//, "");
+    publicIdPath = publicIdPath.replace(/\.[^/.]+$/, "");
+
+    return {
+      publicId: decodeURIComponent(publicIdPath),
+      resourceType,
+    };
+  } catch {
+    return { publicId: "", resourceType: "image" };
+  }
+};
+
+const getMediaAssetCloudinaryInfo = (asset) => {
+  const url = asString(asset?.url);
+  const mimetype = asString(asset?.mimetype).toLowerCase();
+
+  const parsedFromUrl = extractCloudinaryMediaInfoFromUrl(url);
+  const inferredResourceType =
+    mimetype.startsWith("video/")
+      ? "video"
+      : mimetype.startsWith("image/")
+        ? "image"
+        : parsedFromUrl.resourceType;
+
+  return {
+    publicId: asString(asset?.publicId) || parsedFromUrl.publicId,
+    resourceType: inferredResourceType === "video" ? "video" : "image",
+  };
+};
+
+const buildMediaAssetComparisonKey = (asset) => {
+  const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
+  if (cloudinaryInfo.publicId) {
+    return `public:${cloudinaryInfo.resourceType}:${cloudinaryInfo.publicId}`;
+  }
+
+  const url = asString(asset?.url);
+  if (url) {
+    return `url:${url}`;
+  }
+
+  return "";
+};
+
+const preserveExistingMediaMetadata = (nextAssets, existingAssets) => {
+  const normalizedNext = normalizeMediaList(nextAssets);
+  const normalizedExisting = normalizeMediaList(existingAssets);
+
+  const existingByUrl = new Map(
+    normalizedExisting
+      .map((asset) => [asString(asset.url), asset])
+      .filter(([url]) => Boolean(url))
+  );
+
+  return normalizedNext.map((asset) => {
+    const url = asString(asset.url);
+    const matchedExisting = existingByUrl.get(url);
+    const size = Number(asset.size);
+
+    if (!matchedExisting) {
+      return asset;
+    }
+
+    const existingSize = Number(matchedExisting.size);
+
+    return {
+      url,
+      publicId: asString(asset.publicId || matchedExisting.publicId),
+      mimetype: asString(asset.mimetype || matchedExisting.mimetype),
+      size:
+        Number.isFinite(size) && size > 0
+          ? size
+          : Number.isFinite(existingSize) && existingSize > 0
+            ? existingSize
+            : 0,
+    };
+  });
+};
+
+const resolveRemovedCloudinaryAssets = (previousAssets, nextAssets) => {
+  const previous = normalizeMediaList(previousAssets);
+  const next = normalizeMediaList(nextAssets);
+  const nextKeys = new Set(next.map((asset) => buildMediaAssetComparisonKey(asset)).filter(Boolean));
+  const removedAssets = [];
+
+  for (const previousAsset of previous) {
+    const key = buildMediaAssetComparisonKey(previousAsset);
+    if (!key || nextKeys.has(key)) {
+      continue;
+    }
+
+    const cloudinaryInfo = getMediaAssetCloudinaryInfo(previousAsset);
+    if (cloudinaryInfo.publicId) {
+      removedAssets.push(cloudinaryInfo);
+    }
+  }
+
+  return removedAssets;
+};
+
+const deleteCloudinaryAssets = async (assets = []) => {
+  const uniqueAssets = [];
+  const seen = new Set();
+
+  for (const asset of assets) {
+    const publicId = asString(asset?.publicId);
+    const resourceType = asString(asset?.resourceType).toLowerCase() === "video" ? "video" : "image";
+    if (!publicId) continue;
+
+    const key = `${resourceType}:${publicId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    uniqueAssets.push({ publicId, resourceType });
+  }
+
+  if (uniqueAssets.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(
+    uniqueAssets.map((asset) =>
+      deleteCloudinaryMediaByPublicId(asset.publicId, {
+        resourceType: asset.resourceType,
+      })
+    )
+  );
+};
+
+const isAbsoluteHttpUrl = (value) => /^https?:\/\//i.test(asString(value));
+
+const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) => {
+  const assets = normalizeMediaList(rawValue);
+  if (assets.length === 0) {
+    return assets;
+  }
+
+  const folder = asString(options.folder);
+  const resourceType = asString(options.resourceType).toLowerCase() === "video" ? "video" : "image";
+  const failureMessage = asString(options.failureMessage) || "Failed to upload media URL to Cloudinary.";
+
+  try {
+    const converted = await Promise.all(
+      assets.map(async (asset) => {
+        const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
+        if (cloudinaryInfo.publicId || /res\.cloudinary\.com/i.test(asString(asset?.url))) {
+          return asset;
+        }
+
+        const sourceUrl = asString(asset?.url);
+        if (!isAbsoluteHttpUrl(sourceUrl)) {
+          return asset;
+        }
+
+        return uploadMediaUrlToCloudinary(sourceUrl, {
+          folder,
+          resourceType,
+        });
+      })
+    );
+
+    return converted;
+  } catch (error) {
+    throw new AppError(asString(error?.message) || failureMessage, httpStatus.INTERNAL_SERVER_ERROR);
+  }
 };
 
 const normalizeStringList = (rawValue) => {
@@ -745,7 +1012,7 @@ const buildUpdatePayload = async (body, currentExercise) => {
     if (exerciseImages.length === 0) {
       throw new AppError("At least one exercise image is required.", httpStatus.BAD_REQUEST);
     }
-    updates.exerciseImages = exerciseImages;
+    updates.exerciseImages = preserveExistingMediaMetadata(exerciseImages, currentExercise.exerciseImages);
   }
 
   const targetMuscleImagesInput = getField(
@@ -753,7 +1020,10 @@ const buildUpdatePayload = async (body, currentExercise) => {
     ["targetMuscleImages", "targetMuscleImage", "muscleImages", "muscleImage"]
   );
   if (targetMuscleImagesInput.provided) {
-    updates.targetMuscleImages = normalizeMediaList(targetMuscleImagesInput.value);
+    updates.targetMuscleImages = preserveExistingMediaMetadata(
+      normalizeMediaList(targetMuscleImagesInput.value),
+      currentExercise.targetMuscleImages
+    );
   }
 
   const demoVideosInput = getField(parsedBody, DEMO_VIDEO_FIELDS);
@@ -762,7 +1032,7 @@ const buildUpdatePayload = async (body, currentExercise) => {
     if (demoVideos.length === 0) {
       throw new AppError("At least one exercise demo video is required.", httpStatus.BAD_REQUEST);
     }
-    updates.demoVideos = demoVideos;
+    updates.demoVideos = preserveExistingMediaMetadata(demoVideos, currentExercise.demoVideos);
   }
 
   const executionModeInput = parseExecutionModeFromBody(parsedBody);
@@ -850,15 +1120,88 @@ const buildUserAccessibleFilter = (user) => {
   return filter;
 };
 
-const getExerciseBodyFromRequest = (req) =>
-  mergeUploadedMediaIntoBody(req.body, req.files, [
+const getExerciseBodyFromRequest = async (req) => {
+  let payload = mergeUploadedMediaIntoBody(req.body, req.files, [
     { target: "exerciseImages", fieldNames: EXERCISE_IMAGE_FIELDS },
     { target: "targetMuscleImages", fieldNames: TARGET_MUSCLE_IMAGE_FIELDS },
     { target: "demoVideos", fieldNames: DEMO_VIDEO_FIELDS },
   ]);
 
+  const exerciseImageFiles = getUploadedFilesByFieldNames(req.files, EXERCISE_IMAGE_FIELDS);
+  const targetMuscleImageFiles = getUploadedFilesByFieldNames(req.files, TARGET_MUSCLE_IMAGE_FIELDS);
+  const demoVideoFiles = getUploadedFilesByFieldNames(req.files, DEMO_VIDEO_FIELDS);
+
+  if (exerciseImageFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      exerciseImages: await uploadMediaFilesToCloudinary(exerciseImageFiles, {
+        folder: CLOUDINARY_EXERCISE_IMAGE_FOLDER,
+        resourceType: "image",
+        failureMessage: "Failed to upload exercise images to Cloudinary.",
+      }),
+    };
+  }
+
+  if (targetMuscleImageFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      targetMuscleImages: await uploadMediaFilesToCloudinary(targetMuscleImageFiles, {
+        folder: CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER,
+        resourceType: "image",
+        failureMessage: "Failed to upload target muscle images to Cloudinary.",
+      }),
+    };
+  }
+
+  if (demoVideoFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      demoVideos: await uploadMediaFilesToCloudinary(demoVideoFiles, {
+        folder: CLOUDINARY_DEMO_VIDEO_FOLDER,
+        resourceType: "video",
+        failureMessage: "Failed to upload demo videos to Cloudinary.",
+      }),
+    };
+  }
+
+  if (Object.hasOwn(payload, "exerciseImages")) {
+    payload = {
+      ...(payload || {}),
+      exerciseImages: await convertMediaAssetsToCloudinaryIfNeeded(payload.exerciseImages, {
+        folder: CLOUDINARY_EXERCISE_IMAGE_FOLDER,
+        resourceType: "image",
+        failureMessage: "Failed to migrate exercise images to Cloudinary.",
+      }),
+    };
+  }
+
+  if (Object.hasOwn(payload, "targetMuscleImages")) {
+    payload = {
+      ...(payload || {}),
+      targetMuscleImages: await convertMediaAssetsToCloudinaryIfNeeded(payload.targetMuscleImages, {
+        folder: CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER,
+        resourceType: "image",
+        failureMessage: "Failed to migrate target muscle images to Cloudinary.",
+      }),
+    };
+  }
+
+  if (Object.hasOwn(payload, "demoVideos")) {
+    payload = {
+      ...(payload || {}),
+      demoVideos: await convertMediaAssetsToCloudinaryIfNeeded(payload.demoVideos, {
+        folder: CLOUDINARY_DEMO_VIDEO_FOLDER,
+        resourceType: "video",
+        failureMessage: "Failed to migrate demo videos to Cloudinary.",
+      }),
+    };
+  }
+
+  return payload;
+};
+
 export const createExercise = catchAsync(async (req, res) => {
-  const payload = await buildCreatePayload(getExerciseBodyFromRequest(req));
+  const payload = await buildCreatePayload(await getExerciseBodyFromRequest(req));
 
   const exercise = await Exercise.create({
     ...payload,
@@ -956,13 +1299,24 @@ export const updateAdminExercise = catchAsync(async (req, res) => {
     throw new AppError("Exercise not found.", httpStatus.NOT_FOUND);
   }
 
-  const updates = await buildUpdatePayload(getExerciseBodyFromRequest(req), exercise);
+  const previousExerciseImages = normalizeMediaList(exercise.exerciseImages);
+  const previousTargetMuscleImages = normalizeMediaList(exercise.targetMuscleImages);
+  const previousDemoVideos = normalizeMediaList(exercise.demoVideos);
+
+  const updates = await buildUpdatePayload(await getExerciseBodyFromRequest(req), exercise);
   if (Object.keys(updates).length === 0) {
     throw new AppError("No valid fields were provided for update.", httpStatus.BAD_REQUEST);
   }
 
   Object.assign(exercise, updates, { updatedBy: req.user._id });
   await exercise.save();
+
+  const removedCloudinaryAssets = [
+    ...resolveRemovedCloudinaryAssets(previousExerciseImages, exercise.exerciseImages),
+    ...resolveRemovedCloudinaryAssets(previousTargetMuscleImages, exercise.targetMuscleImages),
+    ...resolveRemovedCloudinaryAssets(previousDemoVideos, exercise.demoVideos),
+  ];
+  await deleteCloudinaryAssets(removedCloudinaryAssets);
 
   const populated = await Exercise.findById(exercise._id).populate("assignedUser", "firstName email");
   const usageMap = await getProgramUsageMap([exercise._id]);
@@ -1016,10 +1370,23 @@ export const deleteAdminExercise = catchAsync(async (req, res) => {
     throw new AppError("Exercise not found.", httpStatus.NOT_FOUND);
   }
 
+  const exerciseAssets = [
+    ...normalizeMediaList(exercise.exerciseImages),
+    ...normalizeMediaList(exercise.targetMuscleImages),
+    ...normalizeMediaList(exercise.demoVideos),
+  ];
+  const cloudinaryAssets = exerciseAssets
+    .map((asset) => getMediaAssetCloudinaryInfo(asset))
+    .filter((asset) => asString(asset.publicId));
+
   exercise.isActive = false;
   exercise.status = "archived";
+  exercise.exerciseImages = [];
+  exercise.targetMuscleImages = [];
+  exercise.demoVideos = [];
   exercise.updatedBy = req.user._id;
   await exercise.save({ validateBeforeSave: false });
+  await deleteCloudinaryAssets(cloudinaryAssets);
 
   const affectedPrograms = await Program.find({ exerciseRefs: exercise._id });
   await Promise.all(
