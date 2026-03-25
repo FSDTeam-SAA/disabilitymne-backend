@@ -1,9 +1,9 @@
-# Express + MongoDB + Cloudinary Scaffold
+# Express + MongoDB Upload Scaffold
 
 Includes:
 - Express.js app bootstrap
 - MongoDB via Mongoose
-- Cloudinary file uploads using `multer` + `multer-storage-cloudinary`
+- Local file uploads using `multer` disk storage (`/uploads/*`)
 - JWT auth (register/login/protected routes)
 - Refresh-token auth rotation (`accessToken` + `refreshToken`)
 - OTP-based password reset flow with branded email delivery
@@ -62,7 +62,7 @@ BACKEND_PUBLIC_URL=http://localhost:8000
 - key: `file` (type: File)
 - optional: `folder` (string)
 
-Response returns Cloudinary `secure_url` etc.
+Response returns a direct file URL from backend static uploads.
 
 ## Multipart Image Fields
 
@@ -84,9 +84,10 @@ These endpoints now expect `multipart/form-data` when you want to upload images 
     or simple fields `sets`, `reps`, `countdown` (weight defaults to `1kg`)
 
 Notes:
-- Include optional `folder` in form-data if you want a custom Cloudinary folder.
+- Include optional `folder` in form-data if you want a custom local folder under `uploads/`.
 - Non-file values can stay as regular text fields in the same multipart request.
-- Exercise demo videos can now be uploaded directly in the same multipart request and are stored in Cloudinary before saving to `demoVideos`.
+- Exercise demo videos can now be uploaded directly in the same multipart request and are stored locally before saving to `demoVideos`.
+- `PATCH /api/v1/users/me` and `PATCH /api/v1/users/me/profile-image` now upload `profileImage` to Cloudinary when Cloudinary env variables are configured.
 
 ## Auth APIs
 

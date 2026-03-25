@@ -1,10 +1,14 @@
 import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
+import { toUploadedMediaAsset } from "../utils/uploadedMedia.js";
 
-const buildUploadResult = (file) => ({
-  url: file.path,
-});
+const buildUploadResult = (file) => {
+  const asset = toUploadedMediaAsset(file);
+  return {
+    url: asset?.url || "",
+  };
+};
 
 /**
  * POST /api/v1/uploads/image

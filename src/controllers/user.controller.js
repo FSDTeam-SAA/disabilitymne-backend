@@ -1,8 +1,10 @@
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { getPlanByKey } from "../services/subscriptionPlan.service.js";
+import { uploadImageFileToCloudinary } from "../services/cloudinary.service.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
 const MAX_ONBOARDING_STEP = 8;
@@ -107,6 +109,72 @@ const normalizeProfileImage = (value) => {
   };
 };
 
+const normalizeUploadedFiles = (files) => {
+  if (!files) return {};
+
+  if (Array.isArray(files)) {
+    return files.reduce((acc, file) => {
+      const fieldName = asString(file?.fieldname);
+      if (!fieldName) return acc;
+
+      if (!acc[fieldName]) {
+        acc[fieldName] = [];
+      }
+
+      acc[fieldName].push(file);
+      return acc;
+    }, {});
+  }
+
+  return files;
+};
+
+const getFirstUploadedProfileFile = (files) => {
+  const groupedFiles = normalizeUploadedFiles(files);
+
+  for (const fieldName of PROFILE_IMAGE_FIELDS) {
+    const fieldFiles = groupedFiles[fieldName];
+    if (Array.isArray(fieldFiles) && fieldFiles.length > 0) {
+      return fieldFiles[0];
+    }
+  }
+
+  return null;
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
+};
+
+const applyCloudinaryProfileImage = async (req, payload) => {
+  const uploadedFile = getFirstUploadedProfileFile(req.files);
+  if (!uploadedFile) {
+    return payload;
+  }
+
+  try {
+    const cloudinaryAsset = await uploadImageFileToCloudinary(uploadedFile, {
+      folder: "users/profile-images",
+    });
+
+    return {
+      ...(payload || {}),
+      profileImage: cloudinaryAsset,
+    };
+  } catch (error) {
+    throw new AppError(asString(error?.message) || "Failed to upload profile image to Cloudinary.", httpStatus.INTERNAL_SERVER_ERROR);
+  } finally {
+    await cleanupTemporaryUpload(uploadedFile);
+  }
+};
+
 const applyOnboardingUpdates = (user, payload) => {
   const updates = payload || {};
 
@@ -195,8 +263,9 @@ const applyOnboardingUpdates = (user, payload) => {
   }
 };
 
-const getProfileBodyFromRequest = (req) => {
-  const payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+const getProfileBodyFromRequest = async (req) => {
+  let payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+  payload = await applyCloudinaryProfileImage(req, payload);
 
   if (Array.isArray(payload.profileImage)) {
     payload.profileImage = payload.profileImage[0] || null;
@@ -225,8 +294,8 @@ const getProfileBodyFromRequest = (req) => {
   return payload;
 };
 
-const getProfileImageFromRequest = (req) => {
-  const payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
+const getProfileImageFromRequest = async (req) => {
+  const payload = await getProfileBodyFromRequest(req);
 
   if (!Object.hasOwn(payload, "profileImage")) {
     throw new AppError("profileImage is required.", httpStatus.BAD_REQUEST);
@@ -247,7 +316,7 @@ export const getMe = catchAsync(async (req, res) => {
 });
 
 export const updateMe = catchAsync(async (req, res) => {
-  applyOnboardingUpdates(req.user, getProfileBodyFromRequest(req));
+  applyOnboardingUpdates(req.user, await getProfileBodyFromRequest(req));
   await req.user.save();
 
   res.status(httpStatus.OK).json({
@@ -258,7 +327,7 @@ export const updateMe = catchAsync(async (req, res) => {
 });
 
 export const updateMyProfileImage = catchAsync(async (req, res) => {
-  req.user.profileImage = normalizeProfileImage(getProfileImageFromRequest(req));
+  req.user.profileImage = normalizeProfileImage(await getProfileImageFromRequest(req));
   await req.user.save();
 
   res.status(httpStatus.OK).json({
