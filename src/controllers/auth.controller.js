@@ -116,7 +116,7 @@ export const login = catchAsync(async (req, res) => {
 
   const accountStatus = user.accountStatus || (user.isActive ? "active" : "deactivated");
   if (!user.isActive || accountStatus !== "active") {
-    throw new AppError("Your account is not active. Contact support.", httpStatus.FORBIDDEN);
+    throw new AppError("Your account is not active. Contact support@disabilitymne.com.", httpStatus.FORBIDDEN);
   }
   const tokens = await issueAndPersistTokens(user, { updateLastLogin: true });
 

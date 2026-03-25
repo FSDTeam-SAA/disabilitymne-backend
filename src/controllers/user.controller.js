@@ -5,6 +5,7 @@ import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { getPlanByKey } from "../services/subscriptionPlan.service.js";
 import { uploadImageFileToCloudinary } from "../services/cloudinary.service.js";
+import { WeightLog } from "../models/weightLog.model.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
 const MAX_ONBOARDING_STEP = 8;
@@ -140,6 +141,50 @@ const getFirstUploadedProfileFile = (files) => {
   }
 
   return null;
+};
+
+const toKg = (measurement) => {
+  if (!measurement || typeof measurement !== "object") return 0;
+
+  const value = Number(measurement.value);
+  const unit = asString(measurement.unit).toLowerCase();
+  if (!Number.isFinite(value) || value <= 0) return 0;
+
+  if (unit === "kg") return value;
+  if (unit === "lbs") return value * 0.453592;
+  return 0;
+};
+
+const hasMeaningfulWeightChange = (previousWeight, nextWeight) => {
+  const nextWeightKg = toKg(nextWeight);
+  if (!nextWeightKg) return false;
+
+  const previousWeightKg = toKg(previousWeight);
+  if (!previousWeightKg) return true;
+
+  return Math.abs(nextWeightKg - previousWeightKg) >= 0.05;
+};
+
+const recordWeightSnapshotIfNeeded = async ({ user, previousWeight, nextWeight }) => {
+  if (!hasMeaningfulWeightChange(previousWeight, nextWeight)) {
+    return;
+  }
+
+  const weightKg = Number(toKg(nextWeight).toFixed(2));
+  if (!weightKg) {
+    return;
+  }
+
+  await WeightLog.create({
+    user: user._id,
+    weightKg,
+    measurement: {
+      value: Number(nextWeight.value),
+      unit: asString(nextWeight.unit).toLowerCase(),
+    },
+    source: user.onboardingCompleted ? "profile_update" : "onboarding",
+    recordedAt: new Date(),
+  });
 };
 
 const cleanupTemporaryUpload = async (file) => {
@@ -316,8 +361,16 @@ export const getMe = catchAsync(async (req, res) => {
 });
 
 export const updateMe = catchAsync(async (req, res) => {
-  applyOnboardingUpdates(req.user, await getProfileBodyFromRequest(req));
+  const updates = await getProfileBodyFromRequest(req);
+  const previousWeight = req.user.weightCurrent ? { ...req.user.weightCurrent } : null;
+
+  applyOnboardingUpdates(req.user, updates);
   await req.user.save();
+  await recordWeightSnapshotIfNeeded({
+    user: req.user,
+    previousWeight,
+    nextWeight: req.user.weightCurrent,
+  });
 
   res.status(httpStatus.OK).json({
     success: true,

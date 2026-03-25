@@ -14,6 +14,7 @@ import { Notification } from "../models/notification.model.js";
 import { SupportTicket } from "../models/supportTicket.model.js";
 import { WorkoutExperience } from "../models/workoutExperience.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
+import { WeightLog } from "../models/weightLog.model.js";
 
 const DEFAULT_TRACKER_HABITS = [
   { key: "follow_diet", title: "Follow a Diet", icon: "apple" },
@@ -36,6 +37,7 @@ const RECIPE_TYPES = new Set(["all", "breakfast", "lunch", "dinner", "snack", "m
 const LANGUAGE_CODES = new Set(["en", "sr"]);
 const ACCESSIBILITY_KEYS = ["largerText", "highContrast", "reducedMotion", "screenReaderOptimized"];
 const WORKOUT_EXPERIENCE_LEVELS = new Set(["easy", "intermediate", "very_hard"]);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -400,13 +402,61 @@ const toExerciseSettingsResponse = (exercise, customSets = []) => {
   };
 };
 
-const dateToYmd = (date) => {
-  const d = new Date(date);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+const parseTimezoneOffsetMinutes = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return 0;
+  }
+
+  const normalizedValue = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(normalizedValue);
+  if (!Number.isFinite(parsed) || Math.abs(parsed) > 14 * 60) {
+    throw new AppError("tzOffsetMinutes must be a valid timezone offset in minutes.", httpStatus.BAD_REQUEST);
+  }
+
+  return Math.trunc(parsed);
+};
+
+const getRequestTimezoneOffsetMinutes = (req) =>
+  parseTimezoneOffsetMinutes(req.query.tzOffsetMinutes ?? req.headers["x-timezone-offset-minutes"]);
+
+const shiftDateByOffset = (date, offsetMinutes = 0) =>
+  new Date(new Date(date).getTime() + (offsetMinutes * 60 * 1000));
+
+const dateToYmd = (date, offsetMinutes = null) => {
+  if (offsetMinutes === null || offsetMinutes === undefined) {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  const d = shiftDateByOffset(date, offsetMinutes);
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 };
+
+const getLocalStartOfDayUtc = (date, offsetMinutes = 0) => {
+  const shifted = shiftDateByOffset(date, offsetMinutes);
+  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - (offsetMinutes * 60 * 1000));
+};
+
+const getLocalStartOfMonthUtc = (date, offsetMinutes = 0) => {
+  const shifted = shiftDateByOffset(date, offsetMinutes);
+  return new Date(Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), 1) - (offsetMinutes * 60 * 1000));
+};
+
+const getLocalWeekKey = (date, offsetMinutes = 0) => {
+  const shifted = shiftDateByOffset(date, offsetMinutes);
+  const weekday = shifted.getUTCDay() || 7;
+  shifted.setUTCDate(shifted.getUTCDate() - weekday + 1);
+  return dateToYmd(shifted, 0);
+};
+
+const getWeekdayLabel = (date, offsetMinutes = 0) =>
+  shiftDateByOffset(date, offsetMinutes).toLocaleString("en-US", { weekday: "short", timeZone: "UTC" });
 
 const getWeekStartDate = (inputDate) => {
   const d = inputDate ? parseDate(inputDate, "weekStartDate") : new Date();
@@ -582,29 +632,32 @@ const ensureDefaultNotifications = async (userId) => {
   await Notification.insertMany(payload);
 };
 
-const calculateStreakFromLogs = (logs) => {
+const calculateStreakFromLogs = (logs, offsetMinutes = 0, referenceDate = new Date()) => {
   if (!Array.isArray(logs) || logs.length === 0) return 0;
 
-  const daysSet = new Set(logs.map((log) => dateToYmd(log.completedAt || log.createdAt)));
+  const daysSet = new Set(logs.map((log) => dateToYmd(log.completedAt || log.createdAt, offsetMinutes)));
+  const todayKey = dateToYmd(referenceDate, offsetMinutes);
+  const yesterdayKey = dateToYmd(new Date(referenceDate.getTime() - DAY_MS), offsetMinutes);
+
+  if (!daysSet.has(todayKey) && !daysSet.has(yesterdayKey)) {
+    return 0;
+  }
 
   let streak = 0;
-  const pointer = new Date();
-  pointer.setHours(0, 0, 0, 0);
+  let pointer = daysSet.has(todayKey)
+    ? getLocalStartOfDayUtc(referenceDate, offsetMinutes)
+    : getLocalStartOfDayUtc(new Date(referenceDate.getTime() - DAY_MS), offsetMinutes);
 
-  while (daysSet.has(dateToYmd(pointer))) {
+  while (daysSet.has(dateToYmd(pointer, offsetMinutes))) {
     streak += 1;
-    pointer.setDate(pointer.getDate() - 1);
+    pointer = new Date(pointer.getTime() - DAY_MS);
   }
 
   return streak;
 };
 
-const calculateActivityWeeks = (firstWorkoutAt) => {
-  if (!firstWorkoutAt) return 0;
-  const diff = Date.now() - new Date(firstWorkoutAt).getTime();
-  const weeks = Math.ceil(diff / (7 * 24 * 60 * 60 * 1000));
-  return Math.max(1, weeks);
-};
+const calculateActiveWeeksFromLogs = (logs, offsetMinutes = 0) =>
+  Array.isArray(logs) ? new Set(logs.map((log) => getLocalWeekKey(log.completedAt || log.createdAt, offsetMinutes))).size : 0;
 
 const toKg = (measurement) => {
   if (!measurement || typeof measurement.value !== "number") return 0;
@@ -620,8 +673,94 @@ const toMeters = (measurement) => {
   return 0;
 };
 
-const getGreetingLabel = () => {
-  const hour = new Date().getHours();
+const roundNumber = (value, digits = 1) => Number(Number(value || 0).toFixed(digits));
+
+const buildRecentWorkoutChartDays = (logs, offsetMinutes = 0, referenceDate = new Date()) => {
+  const todayStartUtc = getLocalStartOfDayUtc(referenceDate, offsetMinutes);
+  const dayMap = new Map();
+
+  for (const log of logs) {
+    const key = dateToYmd(log.completedAt || log.createdAt, offsetMinutes);
+    const existing = dayMap.get(key) || { workouts: 0, calories: 0 };
+    existing.workouts += 1;
+    existing.calories += Number(log.caloriesBurned || 0);
+    dayMap.set(key, existing);
+  }
+
+  const chartDays = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const dayStartUtc = new Date(todayStartUtc.getTime() - (i * DAY_MS));
+    const key = dateToYmd(dayStartUtc, offsetMinutes);
+    const aggregate = dayMap.get(key);
+
+    chartDays.push({
+      date: key,
+      label: getWeekdayLabel(dayStartUtc, offsetMinutes),
+      workouts: aggregate?.workouts || 0,
+      calories: roundNumber(aggregate?.calories || 0, 2),
+    });
+  }
+
+  return chartDays;
+};
+
+const buildWorkoutProgressStats = async (userId, offsetMinutes = 0) => {
+  const now = new Date();
+  const weeklyRangeStartUtc = new Date(getLocalStartOfDayUtc(now, offsetMinutes).getTime() - (6 * DAY_MS));
+
+  const [totalWorkouts, allLogs, recentLogs] = await Promise.all([
+    WorkoutLog.countDocuments({ user: userId }),
+    WorkoutLog.find({ user: userId }).select("completedAt").lean(),
+    WorkoutLog.find({ user: userId, completedAt: { $gte: weeklyRangeStartUtc } })
+      .select("completedAt caloriesBurned")
+      .lean(),
+  ]);
+
+  const streakDays = calculateStreakFromLogs(allLogs, offsetMinutes, now);
+  const activityWeeks = calculateActiveWeeksFromLogs(allLogs, offsetMinutes);
+  const chartDays = buildRecentWorkoutChartDays(recentLogs, offsetMinutes, now);
+  const weeklyTotalCalories = roundNumber(chartDays.reduce((sum, item) => sum + item.calories, 0), 2);
+  const weeklyTarget = Number(process.env.WEEKLY_CALORIE_TARGET || 2000);
+  const caloriesPercent = weeklyTarget > 0 ? Math.min(100, Math.round((weeklyTotalCalories / weeklyTarget) * 100)) : 0;
+
+  return {
+    totalWorkouts,
+    streakDays,
+    activityWeeks,
+    chartDays,
+    weeklyTarget,
+    weeklyTotalCalories,
+    caloriesPercent,
+  };
+};
+
+const getWeightChangeThisMonthKg = async (userId, currentWeightKg, offsetMinutes = 0) => {
+  if (!currentWeightKg) {
+    return 0;
+  }
+
+  const startOfMonthUtc = getLocalStartOfMonthUtc(new Date(), offsetMinutes);
+  const [baselineBeforeMonth, firstThisMonth] = await Promise.all([
+    WeightLog.findOne({ user: userId, recordedAt: { $lt: startOfMonthUtc } })
+      .sort({ recordedAt: -1 })
+      .select("weightKg")
+      .lean(),
+    WeightLog.findOne({ user: userId, recordedAt: { $gte: startOfMonthUtc } })
+      .sort({ recordedAt: 1 })
+      .select("weightKg")
+      .lean(),
+  ]);
+
+  const baselineWeightKg = Number(baselineBeforeMonth?.weightKg ?? firstThisMonth?.weightKg);
+  if (!Number.isFinite(baselineWeightKg)) {
+    return 0;
+  }
+
+  return roundNumber(currentWeightKg - baselineWeightKg, 1);
+};
+
+const getGreetingLabel = (offsetMinutes = 0) => {
+  const hour = shiftDateByOffset(new Date(), offsetMinutes).getUTCHours();
   if (hour < 12) return "Good morning!";
   if (hour < 17) return "Good afternoon!";
   return "Good evening!";
@@ -633,19 +772,10 @@ export const getHomeOverview = catchAsync(async (req, res) => {
     throw new AppError("Invalid recipeType filter.", httpStatus.BAD_REQUEST);
   }
 
-  const [totalWorkouts, firstWorkout, recentWorkoutLogs, caloriesLastWeekAgg, programs, recipes] = await Promise.all([
-    WorkoutLog.countDocuments({ user: req.user._id }),
-    WorkoutLog.findOne({ user: req.user._id }).sort({ completedAt: 1 }).select("completedAt"),
-    WorkoutLog.find({ user: req.user._id }).sort({ completedAt: -1 }).limit(365).select("completedAt"),
-    WorkoutLog.aggregate([
-      {
-        $match: {
-          user: req.user._id,
-          completedAt: { $gte: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000) },
-        },
-      },
-      { $group: { _id: null, totalCalories: { $sum: "$caloriesBurned" } } },
-    ]),
+  const tzOffsetMinutes = getRequestTimezoneOffsetMinutes(req);
+
+  const [workoutStats, programs, recipes] = await Promise.all([
+    buildWorkoutProgressStats(req.user._id, tzOffsetMinutes),
     Program.find(buildProgramAccessFilter(req.user))
       .sort({ createdAt: -1 })
       .limit(3)
@@ -659,24 +789,20 @@ export const getHomeOverview = catchAsync(async (req, res) => {
       .select("recipeName recipeType recipeDuration caloriesKcal proteinG carbsG fatG recipeImages"),
   ]);
 
-  const streakDays = calculateStreakFromLogs(recentWorkoutLogs);
-  const weeklyCalories = caloriesLastWeekAgg[0]?.totalCalories || 0;
-  const weeklyTarget = Number(process.env.WEEKLY_CALORIE_TARGET || 2000);
-  const caloriesPercent = weeklyTarget > 0 ? Math.min(100, Math.round((weeklyCalories / weeklyTarget) * 100)) : 0;
-  const activityWeeks = calculateActivityWeeks(firstWorkout?.completedAt);
-
   res.status(httpStatus.OK).json({
     success: true,
     data: {
       welcome: {
         firstName: req.user.firstName,
-        greeting: getGreetingLabel(),
+        greeting: getGreetingLabel(tzOffsetMinutes),
       },
       stats: {
-        streakDays,
-        totalWorkouts,
-        caloriesPercent,
-        activityPeriodWeeks: activityWeeks,
+        streakDays: workoutStats.streakDays,
+        totalWorkouts: workoutStats.totalWorkouts,
+        caloriesPercent: workoutStats.caloriesPercent,
+        activityPeriodWeeks: workoutStats.activityWeeks,
+        weeklyCaloriesBurnedKcal: workoutStats.weeklyTotalCalories,
+        weeklyCalorieTargetKcal: workoutStats.weeklyTarget,
       },
       myPrograms: programs.map(toProgramCard),
       myRecipes: recipes.map(toRecipeCard),
@@ -1131,64 +1257,13 @@ export const getMyWorkoutExperiences = catchAsync(async (req, res) => {
 });
 
 export const getProgressOverview = catchAsync(async (req, res) => {
-  const totalWorkouts = await WorkoutLog.countDocuments({ user: req.user._id });
-
-  const [recentLogs, firstWorkout, last7DaysAgg] = await Promise.all([
-    WorkoutLog.find({ user: req.user._id }).sort({ completedAt: -1 }).limit(365).select("completedAt"),
-    WorkoutLog.findOne({ user: req.user._id }).sort({ completedAt: 1 }).select("completedAt"),
-    WorkoutLog.aggregate([
-      {
-        $match: {
-          user: req.user._id,
-          completedAt: { $gte: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000) },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: "$completedAt" },
-            month: { $month: "$completedAt" },
-            day: { $dayOfMonth: "$completedAt" },
-          },
-          calories: { $sum: "$caloriesBurned" },
-          workouts: { $sum: 1 },
-        },
-      },
-    ]),
-  ]);
-
-  const streakDays = calculateStreakFromLogs(recentLogs);
-  const activityWeeks = calculateActivityWeeks(firstWorkout?.completedAt);
-  const weeklyTotalCalories = last7DaysAgg.reduce((sum, item) => sum + item.calories, 0);
-  const weeklyTarget = Number(process.env.WEEKLY_CALORIE_TARGET || 2000);
-  const caloriesPercent = weeklyTarget > 0 ? Math.min(100, Math.round((weeklyTotalCalories / weeklyTarget) * 100)) : 0;
-
-  const dayMap = new Map(
-    last7DaysAgg.map((item) => [
-      `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`,
-      item,
-    ])
-  );
-
-  const chartDays = [];
-  for (let i = 6; i >= 0; i -= 1) {
-    const d = new Date();
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - i);
-    const key = dateToYmd(d);
-    const aggregate = dayMap.get(key);
-
-    chartDays.push({
-      date: key,
-      label: d.toLocaleString("en-US", { weekday: "short" }),
-      workouts: aggregate?.workouts || 0,
-      calories: Number((aggregate?.calories || 0).toFixed(2)),
-    });
-  }
+  const tzOffsetMinutes = getRequestTimezoneOffsetMinutes(req);
+  const workoutStats = await buildWorkoutProgressStats(req.user._id, tzOffsetMinutes);
 
   const weightKg = toKg(req.user.weightCurrent);
   const goalWeightKg = toKg(req.user.goalWeight);
   const heightM = toMeters(req.user.height);
+  const weightChangeThisMonthKg = await getWeightChangeThisMonthKg(req.user._id, weightKg, tzOffsetMinutes);
   const bmi = heightM > 0 ? Number((weightKg / (heightM * heightM)).toFixed(1)) : null;
   let bmiStatus = "Unknown";
   if (bmi !== null) {
@@ -1204,20 +1279,22 @@ export const getProgressOverview = catchAsync(async (req, res) => {
     success: true,
     data: {
       stats: {
-        streakDays,
-        totalWorkouts,
-        caloriesPercent,
-        activityPeriodWeeks: activityWeeks,
+        streakDays: workoutStats.streakDays,
+        totalWorkouts: workoutStats.totalWorkouts,
+        caloriesPercent: workoutStats.caloriesPercent,
+        activityPeriodWeeks: workoutStats.activityWeeks,
+        weeklyCaloriesBurnedKcal: workoutStats.weeklyTotalCalories,
+        weeklyCalorieTargetKcal: workoutStats.weeklyTarget,
       },
       charts: {
-        weeklyProgress: chartDays.map((item) => ({ label: item.label, value: item.workouts })),
-        weeklyCalories: chartDays.map((item) => ({ label: item.label, value: item.calories })),
+        weeklyProgress: workoutStats.chartDays.map((item) => ({ label: item.label, value: item.workouts })),
+        weeklyCalories: workoutStats.chartDays.map((item) => ({ label: item.label, value: item.calories })),
       },
       bodyMetrics: {
         weightKg: weightKg || null,
         goalWeightKg: goalWeightKg || null,
         weightDeltaToGoalKg,
-        weightChangeThisMonthKg: 0,
+        weightChangeThisMonthKg,
         bmi,
         bmiStatus,
         activityLevel: req.user.fitnessExperience || null,
