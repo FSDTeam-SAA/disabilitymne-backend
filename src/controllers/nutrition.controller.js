@@ -2,7 +2,9 @@ import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { NutritionEntry } from "../models/nutritionEntry.model.js";
+import { Recipe } from "../models/recipe.model.js";
 import { WorkoutLog } from "../models/workoutLog.model.js";
+import { isPremiumActiveUser } from "../utils/access.js";
 
 const USDA_API_BASE = "https://api.nal.usda.gov/fdc/v1";
 const USDA_API_KEY =
@@ -51,6 +53,19 @@ const MEAL_KCAL_DISTRIBUTION = {
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const toMealLabel = (mealType) => {
+  const normalized = asString(mealType).toLowerCase();
+  if (DIARY_MEAL_LABELS[normalized]) {
+    return DIARY_MEAL_LABELS[normalized];
+  }
+
+  if (!normalized) {
+    return "Meal";
+  }
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
 const round = (value, decimals = 1) => {
@@ -674,29 +689,252 @@ const buildMacroPercentages = (totals) => {
   };
 };
 
-const toNutritionEntryResponse = (entry) => ({
-  id: entry._id,
-  entryDate: entry.entryDate,
-  mealType: entry.mealType,
-  mealLabel: DIARY_MEAL_LABELS[entry.mealType] || entry.mealType,
-  foodName: entry.foodName,
-  brandName: entry.brandName || "",
-  source: entry.source,
-  fdcId: entry.fdcId || null,
-  quantity: entry.quantity,
-  servingLabel: entry.servingLabel,
-  totalGrams: round(Number(entry.totalGrams || 0), 1),
-  caloriesKcal: round(Number(entry.caloriesKcal || 0), 1),
-  proteinG: round(Number(entry.proteinG || 0), 1),
-  carbsG: round(Number(entry.carbsG || 0), 1),
-  fatG: round(Number(entry.fatG || 0), 1),
-  fiberG: round(Number(entry.fiberG || 0), 1),
-  sugarG: round(Number(entry.sugarG || 0), 1),
-  imageUrl: entry.imageUrl || "",
-  notes: entry.notes || "",
-  isFavorite: Boolean(entry.isFavorite),
-  createdAt: entry.createdAt,
-  updatedAt: entry.updatedAt,
+const buildEntryServingGrams = (entry) => {
+  const quantity = Number(entry.quantity || 0);
+  const totalGrams = Number(entry.totalGrams || 0);
+
+  if (quantity > 0 && totalGrams > 0) {
+    return round(totalGrams / quantity, 1);
+  }
+
+  return round(totalGrams, 1);
+};
+
+const buildEntryPer100gNutrients = (entry) => {
+  const totalGrams = Number(entry.totalGrams || 0);
+  if (totalGrams <= 0) {
+    return null;
+  }
+
+  const factor = 100 / totalGrams;
+  return {
+    caloriesKcal: round(Number(entry.caloriesKcal || 0) * factor, 1),
+    proteinG: round(Number(entry.proteinG || 0) * factor, 1),
+    carbsG: round(Number(entry.carbsG || 0) * factor, 1),
+    fatG: round(Number(entry.fatG || 0) * factor, 1),
+    fiberG: round(Number(entry.fiberG || 0) * factor, 1),
+    sugarG: round(Number(entry.sugarG || 0) * factor, 1),
+  };
+};
+
+const toNutritionEntryResponse = (entry) => {
+  const totalGrams = round(Number(entry.totalGrams || 0), 1);
+  const servingGrams = buildEntryServingGrams(entry);
+  const nutrientsPer100g = buildEntryPer100gNutrients(entry);
+
+  return {
+    id: entry._id,
+    entryDate: entry.entryDate,
+    date: entry.entryDate,
+    mealType: entry.mealType,
+    mealLabel: DIARY_MEAL_LABELS[entry.mealType] || entry.mealType,
+    foodName: entry.foodName,
+    brandName: entry.brandName || "",
+    source: entry.source,
+    fdcId: entry.fdcId || null,
+    quantity: entry.quantity,
+    servingLabel: entry.servingLabel,
+    servingGrams,
+    portionGrams: servingGrams,
+    totalGrams,
+    caloriesKcal: round(Number(entry.caloriesKcal || 0), 1),
+    proteinG: round(Number(entry.proteinG || 0), 1),
+    carbsG: round(Number(entry.carbsG || 0), 1),
+    fatG: round(Number(entry.fatG || 0), 1),
+    fiberG: round(Number(entry.fiberG || 0), 1),
+    sugarG: round(Number(entry.sugarG || 0), 1),
+    nutrientsPer100g,
+    imageUrl: entry.imageUrl || "",
+    notes: entry.notes || "",
+    isFavorite: Boolean(entry.isFavorite),
+    favoriteKind: "food",
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+};
+
+const buildFavoriteEntryKey = (entry) => {
+  if (Number.isFinite(Number(entry.fdcId)) && Number(entry.fdcId) > 0) {
+    return `fdc:${Number(entry.fdcId)}`;
+  }
+
+  return [
+    asString(entry.foodName).toLowerCase(),
+    asString(entry.brandName).toLowerCase(),
+    asString(entry.servingLabel).toLowerCase(),
+    asString(entry.source).toLowerCase(),
+  ].join("|");
+};
+
+const dedupeNutritionEntries = (entries = [], { limit = 20, favoritesOnly = false } = {}) => {
+  const seen = new Set();
+  const deduped = [];
+
+  for (const entry of entries) {
+    const key = buildFavoriteEntryKey(entry);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    if (favoritesOnly && !entry.isFavorite) {
+      continue;
+    }
+    deduped.push(entry);
+    if (deduped.length >= limit) {
+      break;
+    }
+  }
+
+  return deduped;
+};
+
+const getFavoriteRecipeRefList = (user) =>
+  (user?.favoriteRecipeRefs || [])
+    .map((item) => ({
+      recipeId: String(item?.recipe || item || ""),
+      savedAt: item?.savedAt ? new Date(item.savedAt) : new Date(0),
+    }))
+    .filter((item) => item.recipeId);
+
+const isRecipeAccessibleToUser = (recipe, user) => {
+  if (!recipe || !recipe.isActive || recipe.status !== "published") {
+    return false;
+  }
+
+  if (recipe.userType === "normal_user") {
+    return true;
+  }
+
+  return (
+    isPremiumActiveUser(user) &&
+    recipe.userType === "premium_user" &&
+    recipe.assignedUser &&
+    String(recipe.assignedUser) === String(user._id)
+  );
+};
+
+const buildFavoriteMealItems = (entries = []) =>
+  entries.map((entry) => ({
+    foodName: entry.foodName,
+    brandName: entry.brandName || "",
+    source: entry.source,
+    fdcId: entry.fdcId || null,
+    quantity: round(Number(entry.quantity || 0), 2),
+    servingLabel: entry.servingLabel,
+    totalGrams: round(Number(entry.totalGrams || 0), 1),
+    caloriesKcal: round(Number(entry.caloriesKcal || 0), 1),
+    proteinG: round(Number(entry.proteinG || 0), 1),
+    carbsG: round(Number(entry.carbsG || 0), 1),
+    fatG: round(Number(entry.fatG || 0), 1),
+    fiberG: round(Number(entry.fiberG || 0), 1),
+    sugarG: round(Number(entry.sugarG || 0), 1),
+    imageUrl: entry.imageUrl || "",
+  }));
+
+const buildFavoriteMealSignature = (mealType, items = []) =>
+  [
+    normalizeMealType(mealType),
+    ...items.map((item) =>
+      [
+        Number.isFinite(Number(item.fdcId)) ? `fdc:${Number(item.fdcId)}` : asString(item.foodName).toLowerCase(),
+        asString(item.brandName).toLowerCase(),
+        round(Number(item.quantity || 0), 2),
+        asString(item.servingLabel).toLowerCase(),
+        round(Number(item.totalGrams || 0), 1),
+      ].join("|")
+    ),
+  ].join("||");
+
+const buildFavoriteMealTitle = (mealType, items = [], providedTitle = "") => {
+  const manualTitle = asString(providedTitle);
+  if (manualTitle) {
+    return manualTitle.slice(0, 160);
+  }
+
+  const mealLabel = toMealLabel(mealType);
+  const uniqueNames = [...new Set(items.map((item) => asString(item.foodName)).filter(Boolean))];
+  if (uniqueNames.length === 0) {
+    return mealLabel;
+  }
+  if (uniqueNames.length === 1) {
+    return `${mealLabel}: ${uniqueNames[0]}`.slice(0, 160);
+  }
+  if (uniqueNames.length === 2) {
+    return `${mealLabel}: ${uniqueNames[0]}, ${uniqueNames[1]}`.slice(0, 160);
+  }
+
+  return `${mealLabel}: ${uniqueNames[0]}, ${uniqueNames[1]} +${uniqueNames.length - 2}`.slice(0, 160);
+};
+
+const buildFavoriteMealNotes = (items = []) =>
+  items
+    .map((item) => asString(item.foodName))
+    .filter(Boolean)
+    .join(", ")
+    .slice(0, 500);
+
+const buildFavoriteMealResponse = (favoriteMeal) => ({
+  id: favoriteMeal._id,
+  entryDate: favoriteMeal.sourceDate || favoriteMeal.savedAt,
+  date: favoriteMeal.sourceDate || favoriteMeal.savedAt,
+  mealType: favoriteMeal.mealType,
+  mealLabel: toMealLabel(favoriteMeal.mealType),
+  foodName: favoriteMeal.title,
+  brandName:
+    Number(favoriteMeal.itemCount || favoriteMeal.items?.length || 0) > 0
+      ? `${Number(favoriteMeal.itemCount || favoriteMeal.items?.length || 0)} items`
+      : "",
+  source: "saved_meal",
+  fdcId: null,
+  quantity: 1,
+  servingLabel: "saved meal",
+  servingGrams: 0,
+  portionGrams: 0,
+  totalGrams: round(Number(favoriteMeal.totalGrams || 0), 1),
+  caloriesKcal: round(Number(favoriteMeal.caloriesKcal || 0), 1),
+  proteinG: round(Number(favoriteMeal.proteinG || 0), 1),
+  carbsG: round(Number(favoriteMeal.carbsG || 0), 1),
+  fatG: round(Number(favoriteMeal.fatG || 0), 1),
+  fiberG: round(Number(favoriteMeal.fiberG || 0), 1),
+  sugarG: round(Number(favoriteMeal.sugarG || 0), 1),
+  nutrientsPer100g: null,
+  imageUrl: favoriteMeal.imageUrl || "",
+  notes: favoriteMeal.notes || "",
+  isFavorite: true,
+  favoriteKind: "meal",
+  createdAt: favoriteMeal.savedAt,
+  updatedAt: favoriteMeal.updatedAt || favoriteMeal.savedAt,
+});
+
+const buildFavoriteRecipeResponse = (recipe) => ({
+  id: recipe._id,
+  entryDate: recipe.updatedAt || recipe.createdAt,
+  date: recipe.updatedAt || recipe.createdAt,
+  mealType: recipe.recipeType || "other",
+  mealLabel: toMealLabel(recipe.recipeType),
+  foodName: recipe.recipeName,
+  brandName: "",
+  source: "recipe",
+  fdcId: null,
+  quantity: 1,
+  servingLabel: "recipe",
+  servingGrams: 0,
+  portionGrams: 0,
+  totalGrams: 0,
+  caloriesKcal: round(Number(recipe.caloriesKcal || 0), 1),
+  proteinG: round(Number(recipe.proteinG || 0), 1),
+  carbsG: round(Number(recipe.carbsG || 0), 1),
+  fatG: round(Number(recipe.fatG || 0), 1),
+  fiberG: 0,
+  sugarG: 0,
+  nutrientsPer100g: null,
+  imageUrl: recipe.recipeImages?.[0]?.url || "",
+  notes: Array.isArray(recipe.ingredients) ? recipe.ingredients.join(", ").slice(0, 500) : "",
+  isFavorite: true,
+  favoriteKind: "recipe",
+  createdAt: recipe.createdAt,
+  updatedAt: recipe.updatedAt,
 });
 
 const resolveEntryNutrients = (body, totalGrams, currentEntry = null) => {
@@ -1026,7 +1264,7 @@ export const getNutritionHistory = catchAsync(async (req, res) => {
 
   const [entries, total] = await Promise.all([
     NutritionEntry.find(filter)
-      .sort({ updatedAt: -1, createdAt: -1 })
+      .sort({ entryDate: -1, updatedAt: -1, createdAt: -1 })
       .skip(skip)
       .limit(safeLimit),
     NutritionEntry.countDocuments(filter),
@@ -1049,34 +1287,174 @@ export const getNutritionFavorites = catchAsync(async (req, res) => {
   const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
   const entries = await NutritionEntry.find({
     user: req.user._id,
-    isFavorite: true,
   })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .limit(safeLimit);
+    .sort({ entryDate: -1, updatedAt: -1, createdAt: -1 })
+    .limit(Math.min(safeLimit * 10, 1000));
+  const favorites = dedupeNutritionEntries(entries, {
+    limit: safeLimit,
+    favoritesOnly: true,
+  });
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: entries.map(toNutritionEntryResponse),
+    data: favorites.map(toNutritionEntryResponse),
   });
 });
 
 export const getNutritionFavoriteSections = catchAsync(async (req, res) => {
   const limit = parseNumber(req.query.limit, "limit", 1, false) ?? 20;
   const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 100);
-  const foods = await NutritionEntry.find({
-    user: req.user._id,
-    isFavorite: true,
-  })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .limit(safeLimit);
+  const [entries, favoriteRecipes] = await Promise.all([
+    NutritionEntry.find({
+      user: req.user._id,
+    })
+      .sort({ entryDate: -1, updatedAt: -1, createdAt: -1 })
+      .limit(Math.min(safeLimit * 5, 500)),
+    (async () => {
+      const favoriteRecipeRefs = getFavoriteRecipeRefList(req.user);
+      if (favoriteRecipeRefs.length === 0) {
+        return [];
+      }
+
+      const favoriteRecipeSavedAtMap = new Map(
+        favoriteRecipeRefs.map((item) => [item.recipeId, item.savedAt])
+      );
+      const recipes = await Recipe.find({
+        _id: { $in: favoriteRecipeRefs.map((item) => item.recipeId) },
+        isActive: true,
+        status: "published",
+      });
+
+      return recipes
+        .filter((recipe) => isRecipeAccessibleToUser(recipe, req.user))
+        .sort((a, b) => {
+          const aSavedAt = favoriteRecipeSavedAtMap.get(String(a._id)) || new Date(0);
+          const bSavedAt = favoriteRecipeSavedAtMap.get(String(b._id)) || new Date(0);
+          return bSavedAt.getTime() - aSavedAt.getTime();
+        })
+        .slice(0, safeLimit);
+    })(),
+  ]);
+  const foods = dedupeNutritionEntries(entries, {
+    limit: safeLimit,
+    favoritesOnly: true,
+  });
+  const meals = [...(req.user.favoriteMeals || [])]
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || b.savedAt || 0).getTime() -
+        new Date(a.updatedAt || a.savedAt || 0).getTime()
+    )
+    .slice(0, safeLimit);
 
   res.status(httpStatus.OK).json({
     success: true,
     data: {
       foods: foods.map(toNutritionEntryResponse),
-      meals: [],
-      recipes: [],
+      meals: meals.map(buildFavoriteMealResponse),
+      recipes: favoriteRecipes.map(buildFavoriteRecipeResponse),
     },
+  });
+});
+
+export const saveNutritionFavoriteMeal = catchAsync(async (req, res) => {
+  const entryDate = normalizeDiaryDate(req.body.entryDate || req.body.date, "date");
+  const mealType = normalizeMealType(req.body.mealType || req.query.mealType || "breakfast");
+  const entries = await NutritionEntry.find({
+    user: req.user._id,
+    entryDate,
+    mealType,
+  }).sort({ createdAt: 1 });
+
+  if (entries.length === 0) {
+    throw new AppError(
+      "No tracked items found for this meal on the selected date.",
+      httpStatus.BAD_REQUEST
+    );
+  }
+
+  const items = buildFavoriteMealItems(entries);
+  const totals = buildNutritionTotals(entries);
+  const signature = buildFavoriteMealSignature(mealType, items);
+  const now = new Date();
+  const title = buildFavoriteMealTitle(mealType, items, req.body.title);
+  const notes = buildFavoriteMealNotes(items);
+  const imageUrl = items.find((item) => item.imageUrl)?.imageUrl || "";
+  if (!Array.isArray(req.user.favoriteMeals)) {
+    req.user.favoriteMeals = [];
+  }
+
+  let favoriteMeal = (req.user.favoriteMeals || []).find(
+    (meal) => meal.signature === signature
+  );
+  const wasExisting = Boolean(favoriteMeal);
+
+  if (favoriteMeal) {
+    favoriteMeal.title = title;
+    favoriteMeal.mealType = mealType;
+    favoriteMeal.sourceDate = entryDate;
+    favoriteMeal.signature = signature;
+    favoriteMeal.itemCount = items.length;
+    favoriteMeal.items = items;
+    favoriteMeal.totalGrams = totals.totalGrams;
+    favoriteMeal.caloriesKcal = totals.caloriesKcal;
+    favoriteMeal.proteinG = totals.proteinG;
+    favoriteMeal.carbsG = totals.carbsG;
+    favoriteMeal.fatG = totals.fatG;
+    favoriteMeal.fiberG = totals.fiberG;
+    favoriteMeal.sugarG = totals.sugarG;
+    favoriteMeal.imageUrl = imageUrl;
+    favoriteMeal.notes = notes;
+    favoriteMeal.updatedAt = now;
+  } else {
+    req.user.favoriteMeals.push({
+      title,
+      mealType,
+      signature,
+      sourceDate: entryDate,
+      itemCount: items.length,
+      items,
+      totalGrams: totals.totalGrams,
+      caloriesKcal: totals.caloriesKcal,
+      proteinG: totals.proteinG,
+      carbsG: totals.carbsG,
+      fatG: totals.fatG,
+      fiberG: totals.fiberG,
+      sugarG: totals.sugarG,
+      imageUrl,
+      notes,
+      savedAt: now,
+      updatedAt: now,
+    });
+    favoriteMeal = req.user.favoriteMeals[req.user.favoriteMeals.length - 1];
+  }
+
+  await req.user.save({ validateBeforeSave: false });
+
+  res.status(wasExisting ? httpStatus.OK : httpStatus.CREATED).json({
+    success: true,
+    message: wasExisting
+      ? "Favorite meal updated successfully."
+      : "Meal saved to favorites successfully.",
+    data: buildFavoriteMealResponse(favoriteMeal),
+  });
+});
+
+export const deleteNutritionFavoriteMeal = catchAsync(async (req, res) => {
+  if (!Array.isArray(req.user.favoriteMeals)) {
+    req.user.favoriteMeals = [];
+  }
+  const favoriteMeal = req.user.favoriteMeals?.id(req.params.mealFavoriteId);
+  if (!favoriteMeal) {
+    throw new AppError("Favorite meal not found.", httpStatus.NOT_FOUND);
+  }
+
+  req.user.favoriteMeals.pull({ _id: req.params.mealFavoriteId });
+  await req.user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Favorite meal removed successfully.",
   });
 });
 

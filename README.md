@@ -111,6 +111,10 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 - `GET /api/v1/users/me/home` (home dashboard cards: welcome, stats, my programs, my recipes)
 - `GET /api/v1/users/me/profile` (profile payload)
 - `GET /api/v1/users/me/progress` (progress cards, weekly charts, body metrics)
+  - optional query: `tzOffsetMinutes=<device offset minutes>` so streaks and 7-day charts use the user's local day boundaries
+  - `stats.caloriesPercent` is weekly calorie-goal progress, not raw kcal
+  - `stats.weeklyCaloriesBurnedKcal` and `stats.weeklyCalorieTargetKcal` are included for raw values
+  - `bodyMetrics.weightChangeThisMonthKg` is computed from stored weight snapshots captured when `weightCurrent` is updated
 - `GET /api/v1/users/me/daily-tracker`
 - `PATCH /api/v1/users/me/daily-tracker` (toggle/update habit cells)
 - `POST /api/v1/users/me/daily-tracker/notes`
