@@ -239,7 +239,28 @@ const ensurePremiumUserAssignable = async (userId) => {
   return user;
 };
 
-const buildRecipeSummary = (recipe) => {
+const getFavoriteRecipeIdSet = (user) =>
+  new Set(
+    (user?.favoriteRecipeRefs || [])
+      .map((item) => String(item?.recipe || item))
+      .filter(Boolean)
+  );
+
+const isRecipeAccessibleToUser = (recipe, user) => {
+  if (!recipe || !recipe.isActive) return false;
+  if (user?.role === "admin") return true;
+  if (recipe.status !== "published") return false;
+  if (recipe.userType === "normal_user") return true;
+
+  return (
+    isPremiumActiveUser(user) &&
+    recipe.userType === "premium_user" &&
+    recipe.assignedUser &&
+    String(recipe.assignedUser._id || recipe.assignedUser) === String(user._id)
+  );
+};
+
+const buildRecipeSummary = (recipe, options = {}) => {
   const assignedUser = recipe.assignedUser && typeof recipe.assignedUser === "object" && recipe.assignedUser._id
     ? {
         id: recipe.assignedUser._id,
@@ -265,13 +286,14 @@ const buildRecipeSummary = (recipe) => {
     recipeImages: toMediaUrlList(recipe.recipeImages),
     status: recipe.status,
     isActive: recipe.isActive,
+    isFavorite: Boolean(options.isFavorite),
     createdAt: recipe.createdAt,
     updatedAt: recipe.updatedAt,
   };
 };
 
-const buildRecipeDetails = (recipe) => ({
-  ...buildRecipeSummary(recipe),
+const buildRecipeDetails = (recipe, options = {}) => ({
+  ...buildRecipeSummary(recipe, options),
   howToPrepare: recipe.howToPrepare || "",
   ingredients: recipe.ingredients || [],
 });
@@ -688,10 +710,15 @@ export const getExploreRecipes = catchAsync(async (req, res) => {
     Recipe.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Recipe.countDocuments(filter),
   ]);
+  const favoriteRecipeIds = getFavoriteRecipeIdSet(req.user);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: recipes.map(buildRecipeSummary),
+    data: recipes.map((recipe) =>
+      buildRecipeSummary(recipe, {
+        isFavorite: favoriteRecipeIds.has(String(recipe._id)),
+      })
+    ),
     meta: buildPagination(page, limit, total),
   });
 });
@@ -725,10 +752,15 @@ export const getMyRecipes = catchAsync(async (req, res) => {
     Recipe.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Recipe.countDocuments(filter),
   ]);
+  const favoriteRecipeIds = getFavoriteRecipeIdSet(req.user);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: recipes.map(buildRecipeSummary),
+    data: recipes.map((recipe) =>
+      buildRecipeSummary(recipe, {
+        isFavorite: favoriteRecipeIds.has(String(recipe._id)),
+      })
+    ),
     meta: buildPagination(page, limit, total),
   });
 });
@@ -745,31 +777,26 @@ export const getRecipeByIdForUser = catchAsync(async (req, res) => {
     throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
   }
 
+  const favoriteRecipeIds = getFavoriteRecipeIdSet(req.user);
+
   if (req.user.role === "admin") {
     return res.status(httpStatus.OK).json({
       success: true,
-      data: buildRecipeDetails(recipe),
+      data: buildRecipeDetails(recipe, {
+        isFavorite: favoriteRecipeIds.has(String(recipe._id)),
+      }),
     });
   }
 
-  if (recipe.status !== "published") {
-    throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
-  }
-
-  const isSharedRecipe = recipe.userType === "normal_user";
-  const isAssignedPremiumRecipe =
-    isPremiumActiveUser(req.user) &&
-    recipe.userType === "premium_user" &&
-    recipe.assignedUser &&
-    recipe.assignedUser._id.toString() === req.user._id.toString();
-
-  if (!isSharedRecipe && !isAssignedPremiumRecipe) {
+  if (!isRecipeAccessibleToUser(recipe, req.user)) {
     throw new AppError("You are not allowed to access this recipe.", httpStatus.FORBIDDEN);
   }
 
   return res.status(httpStatus.OK).json({
     success: true,
-    data: buildRecipeDetails(recipe),
+    data: buildRecipeDetails(recipe, {
+      isFavorite: favoriteRecipeIds.has(String(recipe._id)),
+    }),
   });
 });
 
@@ -792,10 +819,68 @@ export const getAllAccessibleRecipes = catchAsync(async (req, res) => {
     Recipe.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Recipe.countDocuments(filter),
   ]);
+  const favoriteRecipeIds = getFavoriteRecipeIdSet(req.user);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: recipes.map(buildRecipeSummary),
+    data: recipes.map((recipe) =>
+      buildRecipeSummary(recipe, {
+        isFavorite: favoriteRecipeIds.has(String(recipe._id)),
+      })
+    ),
     meta: buildPagination(page, limit, total),
+  });
+});
+
+export const toggleRecipeFavorite = catchAsync(async (req, res) => {
+  const { recipeId } = req.params;
+
+  if (!mongoose.isValidObjectId(recipeId)) {
+    throw new AppError("Invalid recipe id.", httpStatus.BAD_REQUEST);
+  }
+
+  const recipe = await Recipe.findById(recipeId).populate("assignedUser", "firstName email");
+  if (!recipe || !recipe.isActive) {
+    throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
+  }
+
+  if (!isRecipeAccessibleToUser(recipe, req.user)) {
+    throw new AppError("You are not allowed to access this recipe.", httpStatus.FORBIDDEN);
+  }
+
+  const desiredFavorite =
+    parseBoolean(req.body?.isFavorite ?? req.query?.isFavorite, "isFavorite");
+  if (!Array.isArray(req.user.favoriteRecipeRefs)) {
+    req.user.favoriteRecipeRefs = [];
+  }
+  const currentFavoriteIds = getFavoriteRecipeIdSet(req.user);
+  const isAlreadyFavorite = currentFavoriteIds.has(String(recipe._id));
+  const shouldFavorite =
+    desiredFavorite === undefined ? !isAlreadyFavorite : desiredFavorite;
+
+  if (shouldFavorite && !isAlreadyFavorite) {
+    req.user.favoriteRecipeRefs.push({
+      recipe: recipe._id,
+      savedAt: new Date(),
+    });
+  }
+
+  if (!shouldFavorite && isAlreadyFavorite) {
+    req.user.favoriteRecipeRefs = (req.user.favoriteRecipeRefs || []).filter(
+      (item) => String(item?.recipe || item) !== String(recipe._id)
+    );
+  }
+
+  await req.user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: shouldFavorite
+      ? "Recipe added to favorites."
+      : "Recipe removed from favorites.",
+    data: {
+      recipeId: recipe._id,
+      isFavorite: shouldFavorite,
+    },
   });
 });

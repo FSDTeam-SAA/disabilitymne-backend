@@ -44,6 +44,190 @@ const heightMeasurementSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const favoriteRecipeRefSchema = new mongoose.Schema(
+  {
+    recipe: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Recipe",
+      required: true,
+    },
+    savedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
+const favoriteMealItemSchema = new mongoose.Schema(
+  {
+    foodName: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: [160, "Food name should not exceed 160 characters"],
+    },
+    brandName: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [120, "Brand name should not exceed 120 characters"],
+    },
+    source: {
+      type: String,
+      enum: ["manual", "usda"],
+      default: "manual",
+    },
+    fdcId: {
+      type: Number,
+      default: null,
+      min: 1,
+    },
+    quantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    servingLabel: {
+      type: String,
+      default: "gram",
+      trim: true,
+      maxlength: [60, "Serving label should not exceed 60 characters"],
+    },
+    totalGrams: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    caloriesKcal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    proteinG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    carbsG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    fatG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    fiberG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    sugarG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    imageUrl: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+  },
+  { _id: false }
+);
+
+const favoriteMealSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: [160, "Favorite meal title should not exceed 160 characters"],
+    },
+    mealType: {
+      type: String,
+      enum: ["breakfast", "lunch", "dinner", "snack", "other"],
+      required: true,
+    },
+    signature: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: [600, "Favorite meal signature should not exceed 600 characters"],
+    },
+    sourceDate: {
+      type: Date,
+      default: null,
+    },
+    itemCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    items: {
+      type: [favoriteMealItemSchema],
+      default: [],
+    },
+    totalGrams: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    caloriesKcal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    proteinG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    carbsG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    fatG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    fiberG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    sugarG: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    imageUrl: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [500, "Favorite meal notes should not exceed 500 characters"],
+    },
+    savedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
 const mediaAssetSchema = new mongoose.Schema(
   {
     url: { type: String, required: true, trim: true },
@@ -157,6 +341,14 @@ const userSchema = new mongoose.Schema(
     fitnessExperience: {
       type: String,
       enum: FITNESS_EXPERIENCE_LEVELS,
+    },
+    favoriteRecipeRefs: {
+      type: [favoriteRecipeRefSchema],
+      default: [],
+    },
+    favoriteMeals: {
+      type: [favoriteMealSchema],
+      default: [],
     },
     onboardingStep: {
       type: Number,
