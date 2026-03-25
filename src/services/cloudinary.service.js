@@ -23,6 +23,12 @@ const ensureCloudinaryConfig = () => {
   }
 };
 
+const ensureCloudinaryDeleteConfig = () => {
+  if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+    throw new Error("Cloudinary delete requires CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET.");
+  }
+};
+
 const buildCloudinarySignature = (params, apiSecret) => {
   const canonical = Object.entries(params)
     .filter(([, value]) => value !== undefined && value !== null && asString(value) !== "")
@@ -92,5 +98,38 @@ export const uploadImageFileToCloudinary = async (file, options = {}) => {
     publicId: asString(payload?.public_id),
     mimetype,
     size: Number.isFinite(size) && size > 0 ? size : 0,
+  };
+};
+
+export const deleteCloudinaryImageByPublicId = async (publicId) => {
+  const normalizedPublicId = asString(publicId);
+  if (!normalizedPublicId) {
+    return { result: "skipped" };
+  }
+
+  ensureCloudinaryDeleteConfig();
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = buildCloudinarySignature({ public_id: normalizedPublicId, timestamp }, CLOUDINARY_API_SECRET);
+
+  const form = new URLSearchParams();
+  form.append("public_id", normalizedPublicId);
+  form.append("timestamp", String(timestamp));
+  form.append("api_key", CLOUDINARY_API_KEY);
+  form.append("signature", signature);
+
+  const endpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUDINARY_CLOUD_NAME)}/image/destroy`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    body: form,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(parseCloudinaryError(payload) || `Cloudinary destroy failed with status ${response.status}.`);
+  }
+
+  return {
+    result: asString(payload?.result || "ok"),
   };
 };

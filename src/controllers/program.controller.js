@@ -1,10 +1,12 @@
 import mongoose from "mongoose";
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import { deleteCloudinaryImageByPublicId, uploadImageFileToCloudinary } from "../services/cloudinary.service.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
@@ -15,6 +17,8 @@ const PROGRAM_USER_TYPES = new Set(["normal_user", "premium_user"]);
 const PROGRAM_STATUSES = new Set(["draft", "published", "archived"]);
 const PROGRAM_IMAGE_FIELDS = ["programImages", "programImage", "coverImage"];
 const PROGRAM_THUMBNAIL_FIELDS = ["programThumbnails", "programThumbnail", "thumbnailImage"];
+const CLOUDINARY_PROGRAM_IMAGE_FOLDER = "programs/images";
+const CLOUDINARY_PROGRAM_THUMBNAIL_FOLDER = "programs/thumbnails";
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -49,6 +53,181 @@ const getField = (body, keys) => {
 const asString = (value) => {
   if (value === null || value === undefined) return "";
   return String(value).trim();
+};
+
+const normalizeUploadedFiles = (files) => {
+  if (!files) return {};
+
+  if (Array.isArray(files)) {
+    return files.reduce((acc, file) => {
+      const fieldName = asString(file?.fieldname);
+      if (!fieldName) return acc;
+
+      if (!acc[fieldName]) {
+        acc[fieldName] = [];
+      }
+
+      acc[fieldName].push(file);
+      return acc;
+    }, {});
+  }
+
+  return files;
+};
+
+const getUploadedFilesByFieldNames = (files, fieldNames = []) => {
+  const groupedFiles = normalizeUploadedFiles(files);
+  const uploadedFiles = [];
+
+  for (const fieldName of fieldNames) {
+    const fieldFiles = groupedFiles[fieldName];
+    if (Array.isArray(fieldFiles) && fieldFiles.length > 0) {
+      uploadedFiles.push(...fieldFiles);
+    }
+  }
+
+  return uploadedFiles;
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
+};
+
+const cleanupTemporaryUploads = async (files = []) => {
+  await Promise.all(files.map((file) => cleanupTemporaryUpload(file)));
+};
+
+const uploadImagesToCloudinary = async (files, folder, failureMessage) => {
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  try {
+    return await Promise.all(
+      files.map((file) =>
+        uploadImageFileToCloudinary(file, {
+          folder,
+        })
+      )
+    );
+  } catch (error) {
+    throw new AppError(asString(error?.message) || failureMessage, httpStatus.INTERNAL_SERVER_ERROR);
+  } finally {
+    await cleanupTemporaryUploads(files);
+  }
+};
+
+const extractCloudinaryPublicIdFromUrl = (url) => {
+  const rawUrl = asString(url);
+  if (!rawUrl || !/res\.cloudinary\.com/i.test(rawUrl)) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(rawUrl);
+    const marker = "/image/upload/";
+    const markerIndex = parsed.pathname.indexOf(marker);
+    if (markerIndex < 0) {
+      return "";
+    }
+
+    let publicIdPath = parsed.pathname.slice(markerIndex + marker.length);
+    publicIdPath = publicIdPath.replace(/^v\d+\//, "");
+    publicIdPath = publicIdPath.replace(/\.[^/.]+$/, "");
+
+    return decodeURIComponent(publicIdPath);
+  } catch {
+    return "";
+  }
+};
+
+const getMediaAssetPublicId = (asset) =>
+  asString(asset?.publicId) || extractCloudinaryPublicIdFromUrl(asString(asset?.url));
+
+const buildMediaAssetComparisonKey = (asset) => {
+  const publicId = getMediaAssetPublicId(asset);
+  if (publicId) {
+    return `public:${publicId}`;
+  }
+
+  const url = asString(asset?.url);
+  if (url) {
+    return `url:${url}`;
+  }
+
+  return "";
+};
+
+const preserveExistingMediaMetadata = (nextAssets, existingAssets) => {
+  const normalizedNext = normalizeMediaList(nextAssets);
+  const normalizedExisting = normalizeMediaList(existingAssets);
+
+  const existingByUrl = new Map(
+    normalizedExisting
+      .map((asset) => [asString(asset.url), asset])
+      .filter(([url]) => Boolean(url))
+  );
+
+  return normalizedNext.map((asset) => {
+    const url = asString(asset.url);
+    const matchedExisting = existingByUrl.get(url);
+    const size = Number(asset.size);
+
+    if (!matchedExisting) {
+      return asset;
+    }
+
+    const existingSize = Number(matchedExisting.size);
+
+    return {
+      url,
+      publicId: asString(asset.publicId || matchedExisting.publicId),
+      mimetype: asString(asset.mimetype || matchedExisting.mimetype),
+      size:
+        Number.isFinite(size) && size > 0
+          ? size
+          : Number.isFinite(existingSize) && existingSize > 0
+            ? existingSize
+            : 0,
+    };
+  });
+};
+
+const resolveRemovedCloudinaryPublicIds = (previousAssets, nextAssets) => {
+  const previous = normalizeMediaList(previousAssets);
+  const next = normalizeMediaList(nextAssets);
+  const nextKeys = new Set(next.map((asset) => buildMediaAssetComparisonKey(asset)).filter(Boolean));
+  const removedPublicIds = [];
+
+  for (const previousAsset of previous) {
+    const key = buildMediaAssetComparisonKey(previousAsset);
+    if (!key || nextKeys.has(key)) {
+      continue;
+    }
+
+    const publicId = getMediaAssetPublicId(previousAsset);
+    if (publicId) {
+      removedPublicIds.push(publicId);
+    }
+  }
+
+  return [...new Set(removedPublicIds)];
+};
+
+const deleteCloudinaryAssetsByPublicIds = async (publicIds = []) => {
+  const uniquePublicIds = [...new Set(publicIds.map((item) => asString(item)).filter(Boolean))];
+  if (uniquePublicIds.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(uniquePublicIds.map((publicId) => deleteCloudinaryImageByPublicId(publicId)));
 };
 
 const escapeRegex = (input) => input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -764,12 +943,18 @@ const buildUpdatePayload = async (body, currentProgram) => {
 
   const imagesInput = getField(parsedBody, ["programImages", "programImage", "coverImage"]);
   if (imagesInput.provided) {
-    updates.programImages = normalizeMediaList(imagesInput.value);
+    updates.programImages = preserveExistingMediaMetadata(
+      normalizeMediaList(imagesInput.value),
+      currentProgram.programImages
+    );
   }
 
   const thumbnailsInput = getField(parsedBody, ["programThumbnails", "programThumbnail", "thumbnailImage"]);
   if (thumbnailsInput.provided) {
-    updates.programThumbnails = normalizeMediaList(thumbnailsInput.value);
+    updates.programThumbnails = preserveExistingMediaMetadata(
+      normalizeMediaList(thumbnailsInput.value),
+      currentProgram.programThumbnails
+    );
   }
 
   const userTypeInput = getField(parsedBody, ["userType", "plan"]);
@@ -880,14 +1065,42 @@ const populateProgramQuery = (query) =>
       },
     });
 
-const getProgramBodyFromRequest = (req) =>
-  mergeUploadedMediaIntoBody(req.body, req.files, [
+const getProgramBodyFromRequest = async (req) => {
+  let payload = mergeUploadedMediaIntoBody(req.body, req.files, [
     { target: "programImages", fieldNames: PROGRAM_IMAGE_FIELDS },
     { target: "programThumbnails", fieldNames: PROGRAM_THUMBNAIL_FIELDS },
   ]);
 
+  const imageFiles = getUploadedFilesByFieldNames(req.files, PROGRAM_IMAGE_FIELDS);
+  const thumbnailFiles = getUploadedFilesByFieldNames(req.files, PROGRAM_THUMBNAIL_FIELDS);
+
+  if (imageFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      programImages: await uploadImagesToCloudinary(
+        imageFiles,
+        CLOUDINARY_PROGRAM_IMAGE_FOLDER,
+        "Failed to upload program images to Cloudinary."
+      ),
+    };
+  }
+
+  if (thumbnailFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      programThumbnails: await uploadImagesToCloudinary(
+        thumbnailFiles,
+        CLOUDINARY_PROGRAM_THUMBNAIL_FOLDER,
+        "Failed to upload program thumbnails to Cloudinary."
+      ),
+    };
+  }
+
+  return payload;
+};
+
 export const createProgram = catchAsync(async (req, res) => {
-  const payload = await buildCreatePayload(getProgramBodyFromRequest(req));
+  const payload = await buildCreatePayload(await getProgramBodyFromRequest(req));
 
   const program = await Program.create({
     ...payload,
@@ -983,13 +1196,22 @@ export const updateAdminProgram = catchAsync(async (req, res) => {
     throw new AppError("Program not found.", httpStatus.NOT_FOUND);
   }
 
-  const updates = await buildUpdatePayload(getProgramBodyFromRequest(req), program);
+  const previousProgramImages = normalizeMediaList(program.programImages);
+  const previousProgramThumbnails = normalizeMediaList(program.programThumbnails);
+
+  const updates = await buildUpdatePayload(await getProgramBodyFromRequest(req), program);
   if (Object.keys(updates).length === 0) {
     throw new AppError("No valid fields were provided for update.", httpStatus.BAD_REQUEST);
   }
 
   Object.assign(program, updates, { updatedBy: req.user._id });
   await program.save();
+
+  const removedPublicIds = [
+    ...resolveRemovedCloudinaryPublicIds(previousProgramImages, program.programImages),
+    ...resolveRemovedCloudinaryPublicIds(previousProgramThumbnails, program.programThumbnails),
+  ];
+  await deleteCloudinaryAssetsByPublicIds(removedPublicIds);
 
   const populated = await populateProgramQuery(Program.findById(program._id));
 
@@ -1012,10 +1234,19 @@ export const deleteAdminProgram = catchAsync(async (req, res) => {
     throw new AppError("Program not found.", httpStatus.NOT_FOUND);
   }
 
+  const programAssets = [
+    ...normalizeMediaList(program.programImages),
+    ...normalizeMediaList(program.programThumbnails),
+  ];
+  const programAssetPublicIds = [...new Set(programAssets.map((asset) => getMediaAssetPublicId(asset)).filter(Boolean))];
+
   program.isActive = false;
   program.status = "archived";
+  program.programImages = [];
+  program.programThumbnails = [];
   program.updatedBy = req.user._id;
   await program.save({ validateBeforeSave: false });
+  await deleteCloudinaryAssetsByPublicIds(programAssetPublicIds);
 
   res.status(httpStatus.OK).json({
     success: true,
