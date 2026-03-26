@@ -5,6 +5,7 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
+import { collectTrackedProgramIdsForUser, touchUserProgram } from "../utils/userProgramTracker.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { deleteCloudinaryImageByPublicId, uploadImageFileToCloudinary } from "../services/cloudinary.service.js";
 import { Exercise } from "../models/exercise.model.js";
@@ -1053,6 +1054,27 @@ const buildUserAccessibleFilter = (user) => {
   return filter;
 };
 
+const buildMyProgramsFilter = (user, trackedProgramIds = []) => {
+  const interestConditions = [];
+
+  if (Array.isArray(trackedProgramIds) && trackedProgramIds.length > 0) {
+    interestConditions.push({ _id: { $in: trackedProgramIds } });
+  }
+
+  if (isPremiumActiveUser(user)) {
+    interestConditions.push({ userType: "premium_user", assignedUser: user._id });
+  }
+
+  if (interestConditions.length === 0) {
+    return null;
+  }
+
+  return {
+    ...buildUserAccessibleFilter(user),
+    $and: [{ $or: interestConditions }],
+  };
+};
+
 const populateProgramQuery = (query) =>
   query
     .populate("assignedUser", "firstName email")
@@ -1324,24 +1346,23 @@ export const getExplorePrograms = catchAsync(async (req, res) => {
 });
 
 export const getMyPrograms = catchAsync(async (req, res) => {
-  if (!isPremiumActiveUser(req.user)) {
-    throw new AppError("Active premium subscription required to access personalized programs.", httpStatus.FORBIDDEN);
-  }
-
   const page = parsePage(req.query.page);
   const limit = parseLimit(req.query.limit, 20, 100);
   const skip = (page - 1) * limit;
+  const trackedProgramIds = await collectTrackedProgramIdsForUser(req.user._id);
+  const filter = buildMyProgramsFilter(req.user, trackedProgramIds);
 
-  const filter = {
-    status: "published",
-    isActive: true,
-    userType: "premium_user",
-    assignedUser: req.user._id,
-  };
+  if (!filter) {
+    return res.status(httpStatus.OK).json({
+      success: true,
+      data: [],
+      meta: buildPagination(page, limit, 0),
+    });
+  }
 
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
-    filter.$or = [{ programName: pattern }, { programDescription: pattern }];
+    filter.$and = [...(filter.$and || []), { $or: [{ programName: pattern }, { programDescription: pattern }] }];
   }
 
   const [programs, total] = await Promise.all([
@@ -1354,6 +1375,38 @@ export const getMyPrograms = catchAsync(async (req, res) => {
     success: true,
     data: programs.map((program) => buildProgramSummaryForUser(program, userSettingsMap)),
     meta: buildPagination(page, limit, total),
+  });
+});
+
+export const startProgramForUser = catchAsync(async (req, res) => {
+  const { programId } = req.params;
+
+  if (!mongoose.isValidObjectId(programId)) {
+    throw new AppError("Invalid program id.", httpStatus.BAD_REQUEST);
+  }
+
+  const program = await populateProgramQuery(
+    Program.findOne({
+      _id: programId,
+      ...buildUserAccessibleFilter(req.user),
+    })
+  );
+
+  if (!program) {
+    throw new AppError("Program not found or not accessible.", httpStatus.NOT_FOUND);
+  }
+
+  await touchUserProgram({
+    userId: req.user._id,
+    programId: program._id,
+  });
+
+  const userSettingsMap = await buildUserExerciseSettingsMap(req.user._id, [program]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Program added to your programs.",
+    data: buildProgramSummaryForUser(program, userSettingsMap),
   });
 });
 

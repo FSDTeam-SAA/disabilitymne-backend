@@ -4,6 +4,7 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { serializeUser } from "../utils/serializeUser.js";
+import { collectTrackedProgramIdsForUser, touchUserProgram } from "../utils/userProgramTracker.js";
 import { User } from "../models/user.model.js";
 import { Program } from "../models/program.model.js";
 import { Exercise } from "../models/exercise.model.js";
@@ -499,6 +500,27 @@ const buildProgramAccessFilter = (user) => {
   return filter;
 };
 
+const buildMyProgramsFilter = (user, trackedProgramIds = []) => {
+  const interestConditions = [];
+
+  if (Array.isArray(trackedProgramIds) && trackedProgramIds.length > 0) {
+    interestConditions.push({ _id: { $in: trackedProgramIds } });
+  }
+
+  if (isPremiumActiveUser(user)) {
+    interestConditions.push({ userType: "premium_user", assignedUser: user._id });
+  }
+
+  if (interestConditions.length === 0) {
+    return null;
+  }
+
+  return {
+    ...buildProgramAccessFilter(user),
+    $and: [{ $or: interestConditions }],
+  };
+};
+
 const buildRecipeAccessFilter = (user) => {
   const filter = {
     status: "published",
@@ -773,13 +795,17 @@ export const getHomeOverview = catchAsync(async (req, res) => {
   }
 
   const tzOffsetMinutes = getRequestTimezoneOffsetMinutes(req);
+  const trackedProgramIds = await collectTrackedProgramIdsForUser(req.user._id);
+  const myProgramsFilter = buildMyProgramsFilter(req.user, trackedProgramIds);
 
   const [workoutStats, programs, recipes] = await Promise.all([
     buildWorkoutProgressStats(req.user._id, tzOffsetMinutes),
-    Program.find(buildProgramAccessFilter(req.user))
-      .sort({ createdAt: -1 })
-      .limit(3)
-      .select("programName programDuration weekCount programLevel totalExercises programImages programThumbnails"),
+    myProgramsFilter
+      ? Program.find(myProgramsFilter)
+          .sort({ createdAt: -1 })
+          .limit(3)
+          .select("programName programDuration weekCount programLevel totalExercises programImages programThumbnails")
+      : Promise.resolve([]),
     Recipe.find({
       ...buildRecipeAccessFilter(req.user),
       ...(recipeType !== "all" ? { recipeType } : {}),
@@ -1032,6 +1058,14 @@ export const createWorkoutLog = catchAsync(async (req, res) => {
     completedAt,
   });
 
+  if (programId) {
+    await touchUserProgram({
+      userId: req.user._id,
+      programId,
+      touchedAt: completedAt,
+    });
+  }
+
   res.status(httpStatus.CREATED).json({
     success: true,
     message: "Workout logged successfully.",
@@ -1204,6 +1238,12 @@ export const createWorkoutExperience = catchAsync(async (req, res) => {
     experienceLevel,
     notes,
     completedAt,
+  });
+
+  await touchUserProgram({
+    userId: req.user._id,
+    programId: program._id,
+    touchedAt: completedAt,
   });
 
   const populated = await WorkoutExperience.findById(workoutExperience._id).populate("program", "programName");

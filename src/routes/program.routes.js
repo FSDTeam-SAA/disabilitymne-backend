@@ -11,6 +11,7 @@ import {
   getMyPrograms,
   getProgramByIdForUser,
   listPremiumUsers,
+  startProgramForUser,
   updateAdminProgram,
 } from "../controllers/program.controller.js";
 
@@ -36,6 +37,7 @@ router.use("/admin", restrictTo("admin"), adminRouter);
 router.get("/explore", getExplorePrograms);
 router.get("/my", getMyPrograms);
 router.get("/all", getAllAccessiblePrograms);
+router.post("/:programId/start", startProgramForUser);
 router.get("/:programId", getProgramByIdForUser);
 
 export default router;
