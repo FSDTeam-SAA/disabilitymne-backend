@@ -826,6 +826,9 @@ export const getAdminRecipes = catchAsync(async (req, res) => {
   const skip = (page - 1) * limit;
 
   const filter = {};
+  if (!Object.hasOwn(req.query, "isActive") && !req.query.status) {
+    filter.isActive = true;
+  }
 
   if (req.query.userType) {
     filter.userType = normalizeUserType(req.query.userType);
