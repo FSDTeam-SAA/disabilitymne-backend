@@ -13,6 +13,7 @@ import {
 } from "../services/cloudinary.service.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
+import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 import { User } from "../models/user.model.js";
 
 const EXERCISE_STATUSES = new Set(["draft", "published", "archived"]);
@@ -1379,14 +1380,9 @@ export const deleteAdminExercise = catchAsync(async (req, res) => {
     .map((asset) => getMediaAssetCloudinaryInfo(asset))
     .filter((asset) => asString(asset.publicId));
 
-  exercise.isActive = false;
-  exercise.status = "archived";
-  exercise.exerciseImages = [];
-  exercise.targetMuscleImages = [];
-  exercise.demoVideos = [];
-  exercise.updatedBy = req.user._id;
-  await exercise.save({ validateBeforeSave: false });
+  await Exercise.deleteOne({ _id: exercise._id });
   await deleteCloudinaryAssets(cloudinaryAssets);
+  await UserExerciseSetting.deleteMany({ exercise: exercise._id });
 
   const affectedPrograms = await Program.find({ exerciseRefs: exercise._id });
   await Promise.all(
@@ -1402,7 +1398,7 @@ export const deleteAdminExercise = catchAsync(async (req, res) => {
 
   res.status(httpStatus.OK).json({
     success: true,
-    message: "Exercise archived successfully.",
+    message: "Exercise deleted successfully.",
     data: {
       removedFromPrograms: affectedPrograms.length,
     },
