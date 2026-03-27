@@ -931,16 +931,16 @@ export const deleteAdminRecipe = catchAsync(async (req, res) => {
     .map((asset) => getMediaAssetCloudinaryInfo(asset))
     .filter((asset) => asString(asset.publicId));
 
-  recipe.isActive = false;
-  recipe.status = "archived";
-  recipe.recipeImages = [];
-  recipe.updatedBy = req.user._id;
-  await recipe.save({ validateBeforeSave: false });
+  await Recipe.deleteOne({ _id: recipe._id });
   await deleteCloudinaryAssets(recipeCloudinaryAssets);
+  await User.updateMany(
+    { "favoriteRecipeRefs.recipe": recipe._id },
+    { $pull: { favoriteRecipeRefs: { recipe: recipe._id } } }
+  );
 
   res.status(httpStatus.OK).json({
     success: true,
-    message: "Recipe archived successfully.",
+    message: "Recipe deleted successfully.",
   });
 });
 

@@ -11,6 +11,7 @@ import { deleteCloudinaryImageByPublicId, uploadImageFileToCloudinary } from "..
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
+import { UserProgram } from "../models/userProgram.model.js";
 import { User } from "../models/user.model.js";
 
 const PROGRAM_LEVELS = new Set(["beginner", "intermediate", "advanced"]);
@@ -1262,17 +1263,15 @@ export const deleteAdminProgram = catchAsync(async (req, res) => {
   ];
   const programAssetPublicIds = [...new Set(programAssets.map((asset) => getMediaAssetPublicId(asset)).filter(Boolean))];
 
-  program.isActive = false;
-  program.status = "archived";
-  program.programImages = [];
-  program.programThumbnails = [];
-  program.updatedBy = req.user._id;
-  await program.save({ validateBeforeSave: false });
+  await Promise.all([
+    Program.deleteOne({ _id: program._id }),
+    UserProgram.deleteMany({ program: program._id }),
+  ]);
   await deleteCloudinaryAssetsByPublicIds(programAssetPublicIds);
 
   res.status(httpStatus.OK).json({
     success: true,
-    message: "Program archived successfully.",
+    message: "Program deleted successfully.",
   });
 });
 
