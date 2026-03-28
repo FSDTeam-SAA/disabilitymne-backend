@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const LEVELS = ["beginner", "intermediate", "advanced"];
 const USER_TYPES = ["normal_user", "premium_user"];
+const WORKOUT_DAY_INDEXES = [1, 2, 3, 4, 5, 6, 7];
 
 const mediaAssetSchema = new mongoose.Schema(
   {
@@ -68,6 +69,26 @@ const exerciseSchema = new mongoose.Schema(
     },
     durationSeconds: { type: Number, min: 0 },
     calories: { type: Number, min: 0 },
+  },
+  { _id: false }
+);
+
+const workoutDaySchema = new mongoose.Schema(
+  {
+    dayIndex: {
+      type: Number,
+      required: true,
+      enum: WORKOUT_DAY_INDEXES,
+    },
+    exerciseRefs: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Exercise",
+        },
+      ],
+      default: [],
+    },
   },
   { _id: false }
 );
@@ -153,6 +174,10 @@ const programSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    workoutDays: {
+      type: [workoutDaySchema],
+      default: [],
+    },
     exercises: {
       type: [exerciseSchema],
       default: [],
@@ -191,11 +216,41 @@ const programSchema = new mongoose.Schema(
 );
 
 programSchema.pre("validate", function preValidate(next) {
-  this.exerciseRefs = Array.isArray(this.exerciseRefs) ? this.exerciseRefs.filter(Boolean) : [];
-  this.totalExercises = this.exerciseRefs.length;
+  this.workoutDays = Array.isArray(this.workoutDays)
+    ? this.workoutDays
+        .map((day) => ({
+          dayIndex: Number(day?.dayIndex),
+          exerciseRefs: Array.isArray(day?.exerciseRefs) ? day.exerciseRefs.filter(Boolean) : [],
+        }))
+        .filter((day) => WORKOUT_DAY_INDEXES.includes(day.dayIndex) && day.exerciseRefs.length > 0)
+        .sort((a, b) => a.dayIndex - b.dayIndex)
+    : [];
 
-  if (this.totalExercises === 0) {
-    this.totalExercises = Array.isArray(this.exercises) ? this.exercises.length : 0;
+  if (this.workoutDays.length > 0) {
+    const seen = new Set();
+    this.workoutDays = this.workoutDays.filter((day) => {
+      if (seen.has(day.dayIndex)) return false;
+      seen.add(day.dayIndex);
+      return true;
+    });
+
+    const workoutExerciseRefs = this.workoutDays
+      .flatMap((day) => day.exerciseRefs || [])
+      .map((exerciseRef) => exerciseRef.toString());
+
+    const uniqueWorkoutExerciseRefs = [...new Set(workoutExerciseRefs)]
+      .filter(Boolean)
+      .map((id) => new mongoose.Types.ObjectId(id));
+
+    this.exerciseRefs = uniqueWorkoutExerciseRefs;
+    this.totalExercises = uniqueWorkoutExerciseRefs.length;
+  } else {
+    this.exerciseRefs = Array.isArray(this.exerciseRefs) ? this.exerciseRefs.filter(Boolean) : [];
+    this.totalExercises = this.exerciseRefs.length;
+
+    if (this.totalExercises === 0) {
+      this.totalExercises = Array.isArray(this.exercises) ? this.exercises.length : 0;
+    }
   }
 
   if (Array.isArray(this.exercises)) {
@@ -243,5 +298,6 @@ programSchema.pre("validate", function preValidate(next) {
 programSchema.index({ status: 1, isActive: 1, userType: 1, createdAt: -1 });
 programSchema.index({ assignedUser: 1, status: 1, isActive: 1, createdAt: -1 });
 programSchema.index({ exerciseRefs: 1, status: 1, isActive: 1 });
+programSchema.index({ "workoutDays.dayIndex": 1, status: 1, isActive: 1 });
 
 export const Program = mongoose.model("Program", programSchema);

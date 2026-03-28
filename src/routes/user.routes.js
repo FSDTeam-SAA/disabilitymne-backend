@@ -5,6 +5,7 @@ import { getMe, selectPlan, updateMe, updateMyProfileImage } from "../controller
 import {
   addDailyTrackerNote,
   changeMyPassword,
+  completeWorkoutSession,
   createSupportTicket,
   createWorkoutExperience,
   createWorkoutLog,
@@ -51,6 +52,7 @@ router.get("/me/daily-tracker/notes", getMyDailyTrackerNotes);
 router.patch("/me/daily-tracker", updateDailyTracker);
 router.post("/me/daily-tracker/notes", addDailyTrackerNote);
 router.post("/me/workouts/logs", createWorkoutLog);
+router.post("/me/workouts/sessions/complete", completeWorkoutSession);
 router.get("/me/workouts/logs", getWorkoutLogs);
 router.get("/me/exercises/:exerciseId/settings", getMyExerciseSettings);
 router.put("/me/exercises/:exerciseId/settings", upsertMyExerciseSettings);
