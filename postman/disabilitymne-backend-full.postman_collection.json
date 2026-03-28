@@ -1,4 +1,4 @@
-{
+﻿{
   "info": {
     "name": "Disabilitymne Backend - Screen Flow Collection",
     "_postman_id": "2f91c9fa-f06f-4d38-a1bc-f9135e6a3171",
@@ -3347,7 +3347,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"key\": \"monthly_plan\",\n  \"name\": \"Monthly Plan\",\n  \"price\": 29.99,\n  \"currency\": \"USD\",\n  \"durationLabel\": \"Monthly\",\n  \"durationMonths\": 1,\n  \"features\": [\n    \"Adaptive workouts\",\n    \"Recipe access\"\n  ],\n  \"isPopular\": false,\n  \"sortOrder\": 2\n}",
+              "raw": "{\n  \"key\": \"monthly\",\n  \"name\": \"Monthly Plan\",\n  \"price\": 29.99,\n  \"currency\": \"USD\",\n  \"durationLabel\": \"Monthly\",\n  \"durationMonths\": 1,\n  \"features\": [\n    \"Adaptive workouts\",\n    \"Recipe access\"\n  ],\n  \"isPopular\": false,\n  \"sortOrder\": 2\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3776,7 +3776,7 @@
     },
     {
       "key": "planKey",
-      "value": "monthly_plan"
+      "value": "monthly"
     },
     {
       "key": "paymentSuccessUrl",
@@ -3812,3 +3812,5 @@
     }
   ]
 }
+
+

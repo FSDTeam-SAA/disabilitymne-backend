@@ -1,35 +1,38 @@
 export const SUBSCRIPTION_PLANS = Object.freeze([
   {
-    key: "free_trial",
-    name: "Free Trial",
-    price: 0,
-    currency: "USD",
-    trialDays: 7,
-    durationMonths: 0,
-    features: ["Full Home Workout Program", "Recipes"],
-  },
-  {
-    key: "monthly_plan",
+    key: "monthly",
     name: "Monthly Plan",
     price: 29.99,
     currency: "USD",
     durationMonths: 1,
+    trialDays: 0,
     features: ["Full Workout Library Access", "Adaptive Training Plans", "Recipes", "Calorie Calculator"],
   },
   {
-    key: "six_month_plan",
-    name: "Six Month Plan",
+    key: "quarterly",
+    name: "Quarterly Plan",
     price: 149.99,
     currency: "USD",
-    durationMonths: 6,
+    durationMonths: 3,
+    trialDays: 0,
     features: ["Full Workout Library Access", "Adaptive Training Plans", "Recipes", "Calorie Calculator"],
   },
   {
-    key: "premium_plan",
-    name: "Premium",
+    key: "annual",
+    name: "Annual Plan",
+    price: 144,
+    currency: "USD",
+    durationMonths: 12,
+    trialDays: 0,
+    features: ["Full Workout Library Access", "Adaptive Training Plans", "Recipes", "Calorie Calculator"],
+  },
+  {
+    key: "premium",
+    name: "Premium Plan",
     price: 150,
     currency: "USD",
     durationMonths: 1,
+    trialDays: 0,
     features: [
       "Full Workout Library Access",
       "Personalized Training Plan",
@@ -40,6 +43,37 @@ export const SUBSCRIPTION_PLANS = Object.freeze([
   },
 ]);
 
-export const PLAN_KEYS = SUBSCRIPTION_PLANS.map((plan) => plan.key);
+export const PLAN_KEY_ALIASES = Object.freeze({
+  free_trial: "annual",
+  annual_plan: "annual",
+  six_month_plan: "quarterly",
+  quarterly_plan: "quarterly",
+  monthly_plan: "monthly",
+  premium_plan: "premium",
+});
 
-export const getPlanByKey = (planKey) => SUBSCRIPTION_PLANS.find((plan) => plan.key === planKey);
+export const PLAN_KEYS = SUBSCRIPTION_PLANS.map((plan) => plan.key);
+export const PLAN_ENUM_KEYS = [...new Set([...PLAN_KEYS, ...Object.keys(PLAN_KEY_ALIASES)])];
+
+export const normalizePlanKey = (planKey) => {
+  const normalized = String(planKey || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (PLAN_KEYS.includes(normalized)) return normalized;
+  return PLAN_KEY_ALIASES[normalized] || "";
+};
+
+export const getPlanByKey = (planKey) => {
+  const normalizedKey = normalizePlanKey(planKey);
+  return SUBSCRIPTION_PLANS.find((plan) => plan.key === normalizedKey);
+};
+
+export const getPlanKeyVariants = (planKey) => {
+  const normalizedKey = normalizePlanKey(planKey);
+  if (!normalizedKey) return [];
+
+  const aliases = Object.entries(PLAN_KEY_ALIASES)
+    .filter(([, canonicalKey]) => canonicalKey === normalizedKey)
+    .map(([alias]) => alias);
+
+  return [normalizedKey, ...aliases];
+};

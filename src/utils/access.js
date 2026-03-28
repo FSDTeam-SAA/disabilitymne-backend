@@ -1,2 +1,4 @@
+import { normalizePlanKey } from "../constants/subscriptionPlans.js";
+
 export const isPremiumActiveUser = (user) =>
-  Boolean(user && user.selectedPlan === "premium_plan" && user.subscriptionStatus === "active");
+  Boolean(user && normalizePlanKey(user.selectedPlan) === "premium" && user.subscriptionStatus === "active");

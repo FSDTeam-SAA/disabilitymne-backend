@@ -8,14 +8,8 @@ const CORS_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
 const CORS_ALLOWED_HEADERS = ["Content-Type", "Authorization", "X-Refresh-Token", "x-refresh-token"];
 
 const normalizeOrigin = (value) => String(value || "").trim().replace(/\/$/, "");
-const normalizeBoolean = (value, fallback = false) => {
-  if (value === undefined || value === null || value === "") return fallback;
-  const normalized = String(value).trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "off"].includes(normalized)) return false;
-  return fallback;
-};
-const CORS_ALLOW_ALL = normalizeBoolean(process.env.CORS_ALLOW_ALL, true);
+// Allow all origins for current deployment requirements.
+const CORS_ALLOW_ALL = true;
 
 const escapeRegex = (value) => value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
 

@@ -10,7 +10,12 @@ import { SupportTicket } from "../models/supportTicket.model.js";
 import { WorkoutExperience } from "../models/workoutExperience.model.js";
 import { WorkoutLog } from "../models/workoutLog.model.js";
 import { WorkoutSession } from "../models/workoutSession.model.js";
-import { PLAN_KEYS, SUBSCRIPTION_PLANS } from "../constants/subscriptionPlans.js";
+import {
+  PLAN_KEYS,
+  SUBSCRIPTION_PLANS,
+  getPlanKeyVariants,
+  normalizePlanKey as normalizeSubscriptionPlanKey,
+} from "../constants/subscriptionPlans.js";
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
@@ -20,11 +25,20 @@ const WORKOUT_EXPERIENCE_LEVELS = new Set(["easy", "intermediate", "very_hard"])
 const PROFILE_IMAGE_FIELDS = ["profileImage", "avatar", "image"];
 
 const PLAN_LABELS = {
-  free_trial: "Free Trial user",
-  monthly_plan: "Monthly user",
-  six_month_plan: "Six Month user",
-  premium_plan: "Premium user",
+  monthly: "Monthly user",
+  quarterly: "Quarterly user",
+  annual: "Annual user",
+  premium: "Premium user",
 };
+
+const PLAN_FILTERS = {
+  monthly: getPlanKeyVariants("monthly"),
+  quarterly: getPlanKeyVariants("quarterly"),
+  annual: getPlanKeyVariants("annual"),
+  premium: getPlanKeyVariants("premium"),
+};
+
+const ALL_PLAN_FILTER_KEYS = [...new Set(Object.values(PLAN_FILTERS).flat())];
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -131,19 +145,19 @@ const parseDate = (value, fieldName) => {
 };
 
 const normalizePlanKey = (value, required = true) => {
-  const key = asString(value).toLowerCase();
-  if (!key) {
+  const normalizedKey = normalizeSubscriptionPlanKey(value);
+  if (!normalizedKey) {
     if (required) {
       throw new AppError("plan key is required.", httpStatus.BAD_REQUEST);
     }
     return "";
   }
 
-  if (!PLAN_KEYS.includes(key)) {
-    throw new AppError(`Unsupported plan key "${key}".`, httpStatus.BAD_REQUEST);
+  if (!PLAN_KEYS.includes(normalizedKey)) {
+    throw new AppError(`Unsupported plan key "${asString(value)}".`, httpStatus.BAD_REQUEST);
   }
 
-  return key;
+  return normalizedKey;
 };
 
 const normalizeFeatures = (value) => {
@@ -227,8 +241,8 @@ const buildMonthLabels = (months = 12) => {
 };
 
 const subscriptionBadge = (user) => {
-  const key = user.selectedPlan || "free_trial";
-  return PLAN_LABELS[key] || "Free Trial user";
+  const key = normalizeSubscriptionPlanKey(user.selectedPlan);
+  return PLAN_LABELS[key] || "No plan";
 };
 
 const toUserRow = (user) => ({
@@ -238,7 +252,7 @@ const toUserRow = (user) => ({
   phone: user.phone || "",
   createdAt: user.createdAt,
   subscription: subscriptionBadge(user),
-  selectedPlan: user.selectedPlan || "free_trial",
+  selectedPlan: normalizeSubscriptionPlanKey(user.selectedPlan) || null,
   mobilityType: user.mobilityType || "",
   status: user.accountStatus || (user.isActive ? "active" : "deactivated"),
   isActive: Boolean(user.isActive),
@@ -390,7 +404,17 @@ const getDefaultPlanByKey = (planKey) => SUBSCRIPTION_PLANS.find((plan) => plan.
 const ensurePlanDoc = async (planKey) => {
   await ensureDefaultPlansIfEmpty();
 
-  let planDoc = await SubscriptionPlan.findOne({ key: planKey });
+  let planDoc = await SubscriptionPlan.findOne({ key: { $in: getPlanKeyVariants(planKey) } });
+  if (planDoc && planDoc.key !== planKey) {
+    const existingCanonical = await SubscriptionPlan.findOne({ key: planKey });
+    if (!existingCanonical) {
+      planDoc.key = planKey;
+      await planDoc.save({ validateBeforeSave: false });
+    } else {
+      planDoc = existingCanonical;
+    }
+  }
+
   if (!planDoc) {
     const defaultPlan = getDefaultPlanByKey(planKey);
     if (!defaultPlan) {
@@ -406,7 +430,7 @@ const ensurePlanDoc = async (planKey) => {
       durationMonths: defaultPlan.durationMonths || 0,
       trialDays: defaultPlan.trialDays || 0,
       features: defaultPlan.features || [],
-      isPopular: defaultPlan.key === "premium_plan",
+      isPopular: defaultPlan.key === "premium",
       sortOrder: PLAN_KEYS.indexOf(defaultPlan.key) + 1,
       isActive: true,
     });
@@ -416,11 +440,12 @@ const ensurePlanDoc = async (planKey) => {
 };
 
 export const getDashboardOverview = catchAsync(async (req, res) => {
-  const [totalUsers, monthlyUsers, sixMonthUsers, premiumUsers, revenueAgg, recentUsers] = await Promise.all([
+  const [totalUsers, monthlyUsers, quarterlyUsers, annualUsers, premiumUsers, revenueAgg, recentUsers] = await Promise.all([
     User.countDocuments({ role: "user" }),
-    User.countDocuments({ role: "user", selectedPlan: "monthly_plan" }),
-    User.countDocuments({ role: "user", selectedPlan: "six_month_plan" }),
-    User.countDocuments({ role: "user", selectedPlan: "premium_plan" }),
+    User.countDocuments({ role: "user", selectedPlan: { $in: PLAN_FILTERS.monthly } }),
+    User.countDocuments({ role: "user", selectedPlan: { $in: PLAN_FILTERS.quarterly } }),
+    User.countDocuments({ role: "user", selectedPlan: { $in: PLAN_FILTERS.annual } }),
+    User.countDocuments({ role: "user", selectedPlan: { $in: PLAN_FILTERS.premium } }),
     Payment.aggregate([{ $match: { status: "succeeded" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]),
     User.find({ role: "user" })
       .sort({ createdAt: -1 })
@@ -431,16 +456,25 @@ export const getDashboardOverview = catchAsync(async (req, res) => {
   const totalRevenue = revenueAgg[0]?.total || 0;
 
   const surveyAgg = await User.aggregate([
-    { $match: { role: "user", selectedPlan: { $in: PLAN_KEYS } } },
+    { $match: { role: "user", selectedPlan: { $in: ALL_PLAN_FILTER_KEYS } } },
     { $group: { _id: "$selectedPlan", count: { $sum: 1 } } },
   ]);
 
-  const surveyTotal = surveyAgg.reduce((sum, item) => sum + item.count, 0);
+  const surveyCountByPlan = new Map();
+  for (const item of surveyAgg) {
+    const normalizedKey = normalizeSubscriptionPlanKey(item._id);
+    if (!normalizedKey) {
+      continue;
+    }
+
+    surveyCountByPlan.set(normalizedKey, (surveyCountByPlan.get(normalizedKey) || 0) + item.count);
+  }
+
+  const surveyTotal = [...surveyCountByPlan.values()].reduce((sum, count) => sum + count, 0);
   const survey = PLAN_KEYS.map((key) => {
-    const found = surveyAgg.find((item) => item._id === key);
-    const count = found ? found.count : 0;
+    const count = surveyCountByPlan.get(key) || 0;
     const percentage = surveyTotal > 0 ? Number(((count / surveyTotal) * 100).toFixed(2)) : 0;
-    return { key, label: PLAN_LABELS[key], count, percentage };
+    return { key, label: PLAN_LABELS[key] || key, count, percentage };
   });
 
   const monthLabels = buildMonthLabels(12);
@@ -470,7 +504,8 @@ export const getDashboardOverview = catchAsync(async (req, res) => {
       totals: {
         totalUsers,
         totalMonthlyUsers: monthlyUsers,
-        totalSixMonthUsers: sixMonthUsers,
+        totalQuarterlyUsers: quarterlyUsers,
+        totalAnnualUsers: annualUsers,
         totalPremiumUsers: premiumUsers,
         totalRevenue: Number(totalRevenue.toFixed(2)),
         totalRevenueDisplay: formatCurrencyAmount(totalRevenue),
@@ -500,7 +535,7 @@ export const getAdminUsers = catchAsync(async (req, res) => {
   }
 
   if (req.query.subscription) {
-    filter.selectedPlan = normalizePlanKey(req.query.subscription);
+    filter.selectedPlan = { $in: getPlanKeyVariants(normalizePlanKey(req.query.subscription)) };
   }
 
   if (req.query.mobilityType) {
@@ -1032,12 +1067,6 @@ export const createAdminSubscriptionPlan = catchAsync(async (req, res) => {
     payload.features = defaultPlan.features;
   }
 
-  if (planKey === "free_trial") {
-    payload.price = 0;
-    payload.durationMonths = 0;
-    payload.trialDays = Math.max(payload.trialDays || 0, 1);
-  }
-
   const plan = await SubscriptionPlan.create(payload);
 
   res.status(httpStatus.CREATED).json({
@@ -1112,12 +1141,6 @@ export const updateAdminSubscriptionPlan = catchAsync(async (req, res) => {
     }
   }
 
-  if (plan.key === "free_trial") {
-    plan.price = 0;
-    plan.durationMonths = 0;
-    plan.trialDays = Math.max(plan.trialDays || 0, 1);
-  }
-
   plan.updatedBy = req.user._id;
   await plan.save();
 
@@ -1130,7 +1153,7 @@ export const updateAdminSubscriptionPlan = catchAsync(async (req, res) => {
 
 export const deleteAdminSubscriptionPlan = catchAsync(async (req, res) => {
   const planKey = normalizePlanKey(req.params.planKey);
-  const plan = await SubscriptionPlan.findOne({ key: planKey, isActive: true });
+  const plan = await SubscriptionPlan.findOne({ key: { $in: getPlanKeyVariants(planKey) }, isActive: true });
   if (!plan) {
     throw new AppError("Plan not found.", httpStatus.NOT_FOUND);
   }

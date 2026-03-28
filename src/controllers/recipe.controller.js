@@ -13,11 +13,13 @@ import {
 } from "../services/cloudinary.service.js";
 import { Recipe } from "../models/recipe.model.js";
 import { User } from "../models/user.model.js";
+import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
 
 const RECIPE_USER_TYPES = new Set(["normal_user", "premium_user"]);
 const RECIPE_STATUSES = new Set(["draft", "published", "archived"]);
 const RECIPE_IMAGE_FIELDS = ["recipeImages", "recipeImage", "image"];
 const CLOUDINARY_RECIPE_IMAGE_FOLDER = "recipes/images";
+const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -950,7 +952,7 @@ export const listPremiumUsersForRecipes = catchAsync(async (req, res) => {
   const query = {
     role: "user",
     isActive: true,
-    selectedPlan: "premium_plan",
+    selectedPlan: { $in: PREMIUM_PLAN_KEYS },
     subscriptionStatus: "active",
   };
 

@@ -13,6 +13,7 @@ import { Program } from "../models/program.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 import { UserProgram } from "../models/userProgram.model.js";
 import { User } from "../models/user.model.js";
+import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
 
 const PROGRAM_LEVELS = new Set(["beginner", "intermediate", "advanced"]);
 const PROGRAM_USER_TYPES = new Set(["normal_user", "premium_user"]);
@@ -21,6 +22,7 @@ const PROGRAM_IMAGE_FIELDS = ["programImages", "programImage", "coverImage"];
 const PROGRAM_THUMBNAIL_FIELDS = ["programThumbnails", "programThumbnail", "thumbnailImage"];
 const CLOUDINARY_PROGRAM_IMAGE_FOLDER = "programs/images";
 const CLOUDINARY_PROGRAM_THUMBNAIL_FOLDER = "programs/thumbnails";
+const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 const WEEKDAY_LABELS = {
   1: "Mon",
   2: "Tue",
@@ -1469,7 +1471,7 @@ export const listPremiumUsers = catchAsync(async (req, res) => {
   const query = {
     role: "user",
     isActive: true,
-    selectedPlan: "premium_plan",
+    selectedPlan: { $in: PREMIUM_PLAN_KEYS },
     subscriptionStatus: "active",
   };
 
