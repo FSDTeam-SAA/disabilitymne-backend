@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "start": "node server.js",
     "lint": "eslint .",
-    "migrate:program-workout-days": "node scripts/migrateProgramWorkoutDays.js"
+    "migrate:program-workout-days": "node scripts/migrateProgramWorkoutDays.js",
+    "migrate:plan-keys": "node scripts/migrateSubscriptionPlanKeys.js"
   },
   "keywords": [
     "express",

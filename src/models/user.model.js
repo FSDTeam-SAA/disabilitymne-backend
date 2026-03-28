@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { PLAN_KEYS } from "../constants/subscriptionPlans.js";
+import { PLAN_ENUM_KEYS } from "../constants/subscriptionPlans.js";
 
 const WEIGHT_UNITS = ["kg", "lbs"];
 const HEIGHT_UNITS = ["cm", "ft"];
@@ -363,7 +363,7 @@ const userSchema = new mongoose.Schema(
 
     selectedPlan: {
       type: String,
-      enum: PLAN_KEYS,
+      enum: PLAN_ENUM_KEYS,
     },
     subscriptionStatus: {
       type: String,

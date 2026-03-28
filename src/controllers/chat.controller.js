@@ -8,8 +8,10 @@ import { emitChatMessageEvent, emitChatThreadReadEvent, emitChatThreadUpdatedEve
 import { ChatMessage } from "../models/chatMessage.model.js";
 import { ChatThread } from "../models/chatThread.model.js";
 import { User } from "../models/user.model.js";
+import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
 
 const CHAT_ATTACHMENT_FIELDS = ["attachments", "attachment", "files", "file"];
+const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -499,7 +501,7 @@ export const getPremiumUsersForChat = catchAsync(async (req, res) => {
   const query = {
     role: "user",
     isActive: true,
-    selectedPlan: "premium_plan",
+    selectedPlan: { $in: PREMIUM_PLAN_KEYS },
     subscriptionStatus: "active",
   };
 

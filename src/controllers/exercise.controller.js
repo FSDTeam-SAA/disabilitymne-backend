@@ -15,6 +15,7 @@ import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 import { User } from "../models/user.model.js";
+import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
 
 const EXERCISE_STATUSES = new Set(["draft", "published", "archived"]);
 const EXERCISE_IMAGE_FIELDS = ["exerciseImages", "exerciseImage", "image"];
@@ -23,6 +24,7 @@ const DEMO_VIDEO_FIELDS = ["demoVideos", "demoVideo", "exerciseVideo", "exercise
 const CLOUDINARY_EXERCISE_IMAGE_FOLDER = "exercises/images";
 const CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER = "exercises/target-muscles";
 const CLOUDINARY_DEMO_VIDEO_FOLDER = "exercises/videos";
+const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -1411,7 +1413,7 @@ export const listPremiumUsersForExercises = catchAsync(async (req, res) => {
   const query = {
     role: "user",
     isActive: true,
-    selectedPlan: "premium_plan",
+    selectedPlan: { $in: PREMIUM_PLAN_KEYS },
     subscriptionStatus: "active",
   };
 

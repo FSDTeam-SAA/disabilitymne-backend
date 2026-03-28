@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { PLAN_KEYS } from "../constants/subscriptionPlans.js";
+import { PLAN_ENUM_KEYS } from "../constants/subscriptionPlans.js";
 
 const paymentSchema = new mongoose.Schema(
   {
@@ -11,7 +11,7 @@ const paymentSchema = new mongoose.Schema(
     },
     planKey: {
       type: String,
-      enum: PLAN_KEYS,
+      enum: PLAN_ENUM_KEYS,
       required: true,
     },
     planName: {
