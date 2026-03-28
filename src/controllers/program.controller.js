@@ -21,6 +21,16 @@ const PROGRAM_IMAGE_FIELDS = ["programImages", "programImage", "coverImage"];
 const PROGRAM_THUMBNAIL_FIELDS = ["programThumbnails", "programThumbnail", "thumbnailImage"];
 const CLOUDINARY_PROGRAM_IMAGE_FOLDER = "programs/images";
 const CLOUDINARY_PROGRAM_THUMBNAIL_FOLDER = "programs/thumbnails";
+const WEEKDAY_LABELS = {
+  1: "Mon",
+  2: "Tue",
+  3: "Wed",
+  4: "Thu",
+  5: "Fri",
+  6: "Sat",
+  7: "Sun",
+};
+const DEFAULT_WORKOUT_DAY_INDICES = [1, 3, 5];
 
 const parseMaybeJson = (value) => {
   if (typeof value !== "string") return value;
@@ -436,7 +446,7 @@ const parseExerciseIds = (rawValue) => {
     let candidateId = item;
 
     if (item && typeof item === "object") {
-      candidateId = item.exerciseId || item.id || item._id || null;
+      candidateId = item.exerciseId || item.id || item._id || item;
     }
 
     const id = asString(candidateId);
@@ -454,6 +464,111 @@ const parseExerciseIds = (rawValue) => {
 
   return ids;
 };
+
+const normalizeDayIndex = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const integer = Math.floor(parsed);
+  if (integer < 1 || integer > 7) return null;
+  return integer;
+};
+
+const distributeExerciseIdsAcrossDays = (exerciseIds, dayIndices = DEFAULT_WORKOUT_DAY_INDICES) => {
+  const normalizedIds = Array.isArray(exerciseIds) ? exerciseIds.filter(Boolean) : [];
+  const normalizedDayIndices = (Array.isArray(dayIndices) ? dayIndices : [])
+    .map((dayIndex) => normalizeDayIndex(dayIndex))
+    .filter(Boolean);
+
+  if (normalizedIds.length === 0 || normalizedDayIndices.length === 0) {
+    return [];
+  }
+
+  const grouped = new Map(normalizedDayIndices.map((dayIndex) => [dayIndex, []]));
+
+  for (let index = 0; index < normalizedIds.length; index += 1) {
+    const dayIndex = normalizedDayIndices[index % normalizedDayIndices.length];
+    grouped.get(dayIndex).push(normalizedIds[index]);
+  }
+
+  return normalizedDayIndices
+    .map((dayIndex) => ({
+      dayIndex,
+      exerciseIds: grouped.get(dayIndex) || [],
+    }))
+    .filter((day) => day.exerciseIds.length > 0);
+};
+
+const parseWorkoutDays = (rawValue) => {
+  const value = parseMaybeJson(rawValue);
+  if (value === undefined || value === null || value === "") return [];
+
+  if (!Array.isArray(value)) {
+    throw new AppError("workoutDays must be an array.", httpStatus.BAD_REQUEST);
+  }
+
+  const parsedDays = [];
+  const seenDayIndices = new Set();
+
+  for (const rawDay of value) {
+    if (!rawDay || typeof rawDay !== "object") {
+      throw new AppError("Each workout day must be an object.", httpStatus.BAD_REQUEST);
+    }
+
+    const dayIndex = normalizeDayIndex(rawDay.dayIndex);
+    if (!dayIndex) {
+      throw new AppError("workoutDays.dayIndex must be an integer between 1 and 7.", httpStatus.BAD_REQUEST);
+    }
+
+    if (seenDayIndices.has(dayIndex)) {
+      throw new AppError(`Duplicate workout day index found: ${dayIndex}.`, httpStatus.BAD_REQUEST);
+    }
+
+    const exerciseIds = parseExerciseIds(
+      Object.hasOwn(rawDay, "exerciseIds")
+        ? rawDay.exerciseIds
+        : Object.hasOwn(rawDay, "exerciseRefs")
+          ? rawDay.exerciseRefs
+          : rawDay.exercises
+    );
+
+    if (exerciseIds.length === 0) {
+      throw new AppError(`workoutDays dayIndex ${dayIndex} must include at least one exercise.`, httpStatus.BAD_REQUEST);
+    }
+
+    seenDayIndices.add(dayIndex);
+    parsedDays.push({ dayIndex, exerciseIds });
+  }
+
+  return parsedDays.sort((a, b) => a.dayIndex - b.dayIndex);
+};
+
+const extractWorkoutDaysFromProgram = (program) => {
+  if (Array.isArray(program?.workoutDays) && program.workoutDays.length > 0) {
+    const parsed = program.workoutDays
+      .map((day) => ({
+        dayIndex: normalizeDayIndex(day?.dayIndex),
+        exerciseIds: parseExerciseIds(day?.exerciseRefs || []),
+      }))
+      .filter((day) => day.dayIndex && day.exerciseIds.length > 0)
+      .sort((a, b) => a.dayIndex - b.dayIndex);
+
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+
+  const fallbackExerciseIds = Array.isArray(program?.exerciseRefs)
+    ? program.exerciseRefs.map((exerciseRef) => toIdString(exerciseRef)).filter(Boolean)
+    : [];
+
+  return distributeExerciseIdsAcrossDays(fallbackExerciseIds);
+};
+
+const buildWorkoutDayPayload = (workoutDays, exerciseRefById) =>
+  workoutDays.map((day) => ({
+    dayIndex: day.dayIndex,
+    exerciseRefs: day.exerciseIds.map((exerciseId) => exerciseRefById.get(exerciseId)).filter(Boolean),
+  }));
 
 const ensurePremiumUserAssignable = async (userId) => {
   const parsedId = parseObjectId(userId, "assignedUser");
@@ -707,8 +822,22 @@ const buildProgramExerciseIds = (program, exercises) => {
   return Array.isArray(exercises) ? exercises.map((exercise) => toIdString(exercise.id)).filter(Boolean) : [];
 };
 
+const buildProgramWorkoutDays = (program, exercises) => {
+  const exerciseById = new Map((Array.isArray(exercises) ? exercises : []).map((exercise) => [toIdString(exercise.id), exercise]));
+  const workoutDays = extractWorkoutDaysFromProgram(program);
+
+  return workoutDays.map((day) => ({
+    dayIndex: day.dayIndex,
+    dayLabel: WEEKDAY_LABELS[day.dayIndex] || `Day ${day.dayIndex}`,
+    exerciseIds: day.exerciseIds,
+    totalExercises: day.exerciseIds.length,
+    exercises: day.exerciseIds.map((exerciseId) => exerciseById.get(exerciseId)).filter(Boolean),
+  }));
+};
+
 const buildProgramSummary = (program) => {
   const exercises = buildProgramExercises(program);
+  const workoutDays = buildProgramWorkoutDays(program, exercises);
 
   return {
     id: program._id,
@@ -726,6 +855,7 @@ const buildProgramSummary = (program) => {
     totalExercises: exercises.length || program.totalExercises || 0,
     exerciseIds: buildProgramExerciseIds(program, exercises),
     exercises,
+    workoutDays,
     status: program.status,
     isActive: program.isActive,
     programImage: toMediaUrl(program.programImages?.[0]),
@@ -797,11 +927,21 @@ const withEffectiveExerciseSets = (exercise, userSettingsMap) => {
 
 const buildProgramSummaryForUser = (program, userSettingsMap) => {
   const summary = buildProgramSummary(program);
+  const enhancedExercises = Array.isArray(summary.exercises)
+    ? summary.exercises.map((exercise) => withEffectiveExerciseSets(exercise, userSettingsMap))
+    : [];
+  const exerciseById = new Map(enhancedExercises.map((exercise) => [toIdString(exercise.id), exercise]));
 
   return {
     ...summary,
-    exercises: Array.isArray(summary.exercises)
-      ? summary.exercises.map((exercise) => withEffectiveExerciseSets(exercise, userSettingsMap))
+    exercises: enhancedExercises,
+    workoutDays: Array.isArray(summary.workoutDays)
+      ? summary.workoutDays.map((day) => ({
+          ...day,
+          exercises: Array.isArray(day.exercises)
+            ? day.exercises.map((exercise) => exerciseById.get(toIdString(exercise.id)) || exercise)
+            : [],
+        }))
       : [],
   };
 };
@@ -845,6 +985,7 @@ const buildCreatePayload = async (body) => {
     assignedUser = premiumUser._id;
   }
 
+  const workoutDaysInput = getField(parsedBody, ["workoutDays", "programDays", "days"]);
   const rawExerciseSelection = getField(parsedBody, [
     "exerciseIds",
     "exerciseRefs",
@@ -852,12 +993,30 @@ const buildCreatePayload = async (body) => {
     "selectedExercises",
     "exercises",
   ]).value;
+
+  const providedWorkoutDays = workoutDaysInput.provided ? parseWorkoutDays(workoutDaysInput.value) : [];
   const selectedExerciseIds = parseExerciseIds(rawExerciseSelection);
+
+  let normalizedWorkoutDays =
+    providedWorkoutDays.length > 0
+      ? providedWorkoutDays
+      : distributeExerciseIdsAcrossDays(selectedExerciseIds);
+
+  if (normalizedWorkoutDays.length === 0) {
+    throw new AppError("At least one workout day with exercises is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const uniqueExerciseIds = [
+    ...new Set(normalizedWorkoutDays.flatMap((day) => day.exerciseIds || []).filter(Boolean)),
+  ];
+
   const exerciseRefs = await validateLinkedExercises({
-    exerciseIds: selectedExerciseIds,
+    exerciseIds: uniqueExerciseIds,
     userType,
     assignedUserId: assignedUser,
   });
+  const exerciseRefById = new Map(exerciseRefs.map((exerciseRef) => [exerciseRef.toString(), exerciseRef]));
+  normalizedWorkoutDays = buildWorkoutDayPayload(normalizedWorkoutDays, exerciseRefById);
 
   const status = normalizeProgramStatus(getField(parsedBody, ["status"]).value || "published");
 
@@ -875,6 +1034,7 @@ const buildCreatePayload = async (body) => {
     programImages,
     programThumbnails,
     exerciseRefs,
+    workoutDays: normalizedWorkoutDays,
     exercises: [],
     totalExercises: exerciseRefs.length,
     status,
@@ -989,11 +1149,7 @@ const buildUpdatePayload = async (body, currentProgram) => {
     "selectedExercises",
     "exercises",
   ]);
-
-  if (exerciseSelectionInput.provided) {
-    const selectedExerciseIds = parseExerciseIds(exerciseSelectionInput.value);
-    updates.exerciseRefs = selectedExerciseIds.map((exerciseId) => new mongoose.Types.ObjectId(exerciseId));
-  }
+  const workoutDaysInput = getField(parsedBody, ["workoutDays", "programDays", "days"]);
 
   const statusInput = getField(parsedBody, ["status"]);
   if (statusInput.provided) {
@@ -1016,24 +1172,48 @@ const buildUpdatePayload = async (body, currentProgram) => {
   }
 
   const shouldValidateLinkedExercises =
-    Object.hasOwn(updates, "exerciseRefs") || Object.hasOwn(updates, "userType") || Object.hasOwn(updates, "assignedUser");
+    exerciseSelectionInput.provided ||
+    workoutDaysInput.provided ||
+    Object.hasOwn(updates, "userType") ||
+    Object.hasOwn(updates, "assignedUser");
 
   if (shouldValidateLinkedExercises) {
     const nextUserType = updates.userType || currentProgram.userType;
     const nextAssignedUser = Object.hasOwn(updates, "assignedUser")
       ? updates.assignedUser
       : currentProgram.assignedUser?.toString() || null;
-    const nextExerciseIds = (updates.exerciseRefs || currentProgram.exerciseRefs || []).map((exerciseRef) =>
-      exerciseRef.toString()
-    );
+
+    let nextWorkoutDays = workoutDaysInput.provided
+      ? parseWorkoutDays(workoutDaysInput.value)
+      : extractWorkoutDaysFromProgram(currentProgram);
+
+    if (!workoutDaysInput.provided && exerciseSelectionInput.provided) {
+      const selectedExerciseIds = parseExerciseIds(exerciseSelectionInput.value);
+      nextWorkoutDays = distributeExerciseIdsAcrossDays(selectedExerciseIds);
+    }
+
+    if (workoutDaysInput.provided && nextWorkoutDays.length === 0 && exerciseSelectionInput.provided) {
+      const selectedExerciseIds = parseExerciseIds(exerciseSelectionInput.value);
+      nextWorkoutDays = distributeExerciseIdsAcrossDays(selectedExerciseIds);
+    }
+
+    if (nextWorkoutDays.length === 0) {
+      throw new AppError("At least one workout day with exercises is required.", httpStatus.BAD_REQUEST);
+    }
+
+    const nextExerciseIds = [
+      ...new Set(nextWorkoutDays.flatMap((day) => day.exerciseIds || []).filter(Boolean)),
+    ];
 
     const validatedRefs = await validateLinkedExercises({
       exerciseIds: nextExerciseIds,
       userType: nextUserType,
       assignedUserId: nextAssignedUser,
     });
+    const exerciseRefById = new Map(validatedRefs.map((exerciseRef) => [exerciseRef.toString(), exerciseRef]));
 
     updates.exerciseRefs = validatedRefs;
+    updates.workoutDays = buildWorkoutDayPayload(nextWorkoutDays, exerciseRefById);
     updates.exercises = [];
     updates.totalExercises = validatedRefs.length;
   }
@@ -1081,6 +1261,14 @@ const populateProgramQuery = (query) =>
     .populate("assignedUser", "firstName email")
     .populate({
       path: "exerciseRefs",
+      select: "exerciseName userType assignedUser description keyBenefits muscleGroups exerciseImages targetMuscleImages demoVideos defaultSets executionMode isVisibleInLibrary status isActive",
+      populate: {
+        path: "assignedUser",
+        select: "firstName email",
+      },
+    })
+    .populate({
+      path: "workoutDays.exerciseRefs",
       select: "exerciseName userType assignedUser description keyBenefits muscleGroups exerciseImages targetMuscleImages demoVideos defaultSets executionMode isVisibleInLibrary status isActive",
       populate: {
         path: "assignedUser",

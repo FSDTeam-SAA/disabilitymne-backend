@@ -16,6 +16,7 @@ import { SupportTicket } from "../models/supportTicket.model.js";
 import { WorkoutExperience } from "../models/workoutExperience.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 import { WeightLog } from "../models/weightLog.model.js";
+import { WorkoutSession } from "../models/workoutSession.model.js";
 
 const DEFAULT_TRACKER_HABITS = [
   { key: "follow_diet", title: "Follow a Diet", icon: "apple" },
@@ -169,6 +170,31 @@ const normalizeSetTemplatesForResponse = (rawSets) =>
         weightKg: Number.isFinite(Number(set.weightKg)) && Number(set.weightKg) >= 0 ? Number(set.weightKg) : 1,
       }))
     : [];
+
+const parseWorkoutSets = (rawSets, fieldName = "sets") => {
+  if (!Array.isArray(rawSets)) {
+    return [];
+  }
+
+  return rawSets.map((set, index) => ({
+    setNumber: parseNumber(set?.setNumber ?? index + 1, `${fieldName}[${index}].setNumber`, 1, true),
+    reps: parseNumber(set?.reps, `${fieldName}[${index}].reps`, 0, false),
+    weightKg: parseNumber(set?.weightKg, `${fieldName}[${index}].weightKg`, 0, false),
+    durationSeconds: parseNumber(set?.durationSeconds, `${fieldName}[${index}].durationSeconds`, 0, false),
+  }));
+};
+
+const calculateTrainingVolumeFromSets = (sets) =>
+  Number(
+    (Array.isArray(sets) ? sets : []).reduce((sum, set) => {
+      const reps = Number(set?.reps);
+      const weightKg = Number(set?.weightKg);
+      if (!Number.isFinite(reps) || reps <= 0 || !Number.isFinite(weightKg) || weightKg <= 0) {
+        return sum;
+      }
+      return sum + (reps * weightKg);
+    }, 0).toFixed(2)
+  );
 
 const getDurationValueFromTemplate = (template) => {
   if (template.durationSeconds !== undefined && template.durationSeconds !== null && template.durationSeconds !== "") {
@@ -1016,22 +1042,30 @@ export const getMyDailyTrackerNotes = catchAsync(async (req, res) => {
 
 export const createWorkoutLog = catchAsync(async (req, res) => {
   const programId = parseObjectId(req.body.programId, "programId");
+  const exerciseId = parseObjectId(req.body.exerciseId || req.body.exercise, "exerciseId");
   const exerciseName = asString(req.body.exerciseName);
+  const dayIndex = req.body.dayIndex ? parseNumber(req.body.dayIndex, "dayIndex", 1, true) : undefined;
+  if (dayIndex !== undefined && dayIndex > 7) {
+    throw new AppError("dayIndex must be between 1 and 7.", httpStatus.BAD_REQUEST);
+  }
+
   const caloriesBurned = parseNumber(req.body.caloriesBurned, "caloriesBurned", 0, false) || 0;
   const durationMinutes = parseNumber(req.body.durationMinutes, "durationMinutes", 0, false) || 0;
   const notes = asString(req.body.notes);
+  const sessionId = parseObjectId(req.body.sessionId, "sessionId");
+  const weekStartDate = req.body.weekStartDate ? getWeekStartDate(req.body.weekStartDate) : null;
 
-  const sets = Array.isArray(req.body.sets)
-    ? req.body.sets.map((set, index) => ({
-      setNumber: parseNumber(set.setNumber ?? index + 1, "setNumber", 1, true),
-      reps: parseNumber(set.reps, "reps", 0, false),
-      weightKg: parseNumber(set.weightKg, "weightKg", 0, false),
-      durationSeconds: parseNumber(set.durationSeconds, "durationSeconds", 0, false),
-    }))
-    : [];
+  const sets = parseWorkoutSets(parseMaybeJson(req.body.sets), "sets");
 
-  if (!programId && !exerciseName) {
-    throw new AppError("Either programId or exerciseName is required.", httpStatus.BAD_REQUEST);
+  if (!programId && !exerciseName && !exerciseId) {
+    throw new AppError("Either programId, exerciseId, or exerciseName is required.", httpStatus.BAD_REQUEST);
+  }
+
+  let resolvedExerciseName = exerciseName;
+
+  if (exerciseId) {
+    const exercise = await ensureExerciseAccessibleForUser(exerciseId, req.user);
+    resolvedExerciseName = resolvedExerciseName || exercise.exerciseName;
   }
 
   if (programId) {
@@ -1050,10 +1084,15 @@ export const createWorkoutLog = catchAsync(async (req, res) => {
   const workoutLog = await WorkoutLog.create({
     user: req.user._id,
     program: programId || null,
-    exerciseName,
+    exercise: exerciseId || null,
+    dayIndex: dayIndex || null,
+    weekStartDate: weekStartDate || null,
+    sessionId: sessionId || null,
+    exerciseName: resolvedExerciseName,
     sets,
     caloriesBurned,
     durationMinutes,
+    trainingVolume: calculateTrainingVolumeFromSets(sets),
     notes,
     completedAt,
   });
@@ -1072,13 +1111,254 @@ export const createWorkoutLog = catchAsync(async (req, res) => {
     data: {
       id: workoutLog._id,
       program: workoutLog.program,
+      exercise: workoutLog.exercise,
+      sessionId: workoutLog.sessionId,
+      dayIndex: workoutLog.dayIndex,
+      weekStartDate: workoutLog.weekStartDate,
       exerciseName: workoutLog.exerciseName,
       sets: workoutLog.sets,
       caloriesBurned: workoutLog.caloriesBurned,
       durationMinutes: workoutLog.durationMinutes,
+      trainingVolume: workoutLog.trainingVolume,
       completedAt: workoutLog.completedAt,
       notes: workoutLog.notes,
       createdAt: workoutLog.createdAt,
+    },
+  });
+});
+
+const toExerciseIdString = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value._id) return value._id.toString();
+  if (typeof value?.toString === "function") return value.toString();
+  return "";
+};
+
+const getFallbackWorkoutDayExerciseIds = (exerciseIds, dayIndex) => {
+  const buckets = new Map([
+    [1, []],
+    [3, []],
+    [5, []],
+  ]);
+
+  exerciseIds.forEach((exerciseId, index) => {
+    const targetDay = [1, 3, 5][index % 3];
+    buckets.get(targetDay).push(exerciseId);
+  });
+
+  return buckets.get(dayIndex) || [];
+};
+
+const getScheduledExerciseIdsForWorkoutDay = (program, dayIndex) => {
+  const configuredDays = Array.isArray(program?.workoutDays) ? program.workoutDays : [];
+  if (configuredDays.length > 0) {
+    const foundDay = configuredDays.find((day) => Number(day?.dayIndex) === Number(dayIndex));
+    if (!foundDay) return [];
+    return Array.isArray(foundDay.exerciseRefs)
+      ? foundDay.exerciseRefs.map((exerciseRef) => toExerciseIdString(exerciseRef)).filter(Boolean)
+      : [];
+  }
+
+  const fallbackExerciseIds = Array.isArray(program?.exerciseRefs)
+    ? program.exerciseRefs.map((exerciseRef) => toExerciseIdString(exerciseRef)).filter(Boolean)
+    : [];
+
+  return getFallbackWorkoutDayExerciseIds(fallbackExerciseIds, dayIndex);
+};
+
+export const completeWorkoutSession = catchAsync(async (req, res) => {
+  const programId = parseObjectId(req.body.programId, "programId");
+  if (!programId) {
+    throw new AppError("programId is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const dayIndex = parseNumber(req.body.dayIndex, "dayIndex", 1, true);
+  if (dayIndex > 7) {
+    throw new AppError("dayIndex must be between 1 and 7.", httpStatus.BAD_REQUEST);
+  }
+
+  const weekStartDate = getWeekStartDate(req.body.weekStartDate);
+  const exercisesInput = parseMaybeJson(req.body.exercises);
+  if (!Array.isArray(exercisesInput) || exercisesInput.length === 0) {
+    throw new AppError("exercises must be a non-empty array.", httpStatus.BAD_REQUEST);
+  }
+
+  const program = await Program.findOne({
+    _id: programId,
+    ...buildProgramAccessFilter(req.user),
+  })
+    .select("_id programName exerciseRefs workoutDays")
+    .populate("workoutDays.exerciseRefs", "exerciseName");
+
+  if (!program) {
+    throw new AppError("Program not found or not accessible.", httpStatus.NOT_FOUND);
+  }
+
+  const scheduledExerciseIds = getScheduledExerciseIdsForWorkoutDay(program, dayIndex);
+  if (scheduledExerciseIds.length === 0) {
+    throw new AppError("No exercises are scheduled for this workout day.", httpStatus.BAD_REQUEST);
+  }
+
+  const parsedExercises = exercisesInput.map((item, index) => {
+    const exerciseId = parseObjectId(item?.exerciseId || item?.exercise, `exercises[${index}].exerciseId`);
+    if (!exerciseId) {
+      throw new AppError(`exercises[${index}].exerciseId is required.`, httpStatus.BAD_REQUEST);
+    }
+
+    const sets = parseWorkoutSets(parseMaybeJson(item?.sets), `exercises[${index}].sets`);
+    const caloriesBurned = parseNumber(item?.caloriesBurned, `exercises[${index}].caloriesBurned`, 0, false) || 0;
+    const durationMinutes = parseNumber(item?.durationMinutes, `exercises[${index}].durationMinutes`, 0, false) || 0;
+    const completedAt = item?.completedAt ? parseDate(item.completedAt, `exercises[${index}].completedAt`) : new Date();
+
+    return {
+      exerciseId,
+      sets,
+      caloriesBurned,
+      durationMinutes,
+      completedAt,
+    };
+  });
+
+  const submittedExerciseIds = [...new Set(parsedExercises.map((entry) => entry.exerciseId))];
+  const missingExerciseIds = scheduledExerciseIds.filter((exerciseId) => !submittedExerciseIds.includes(exerciseId));
+  const extraExerciseIds = submittedExerciseIds.filter((exerciseId) => !scheduledExerciseIds.includes(exerciseId));
+
+  if (missingExerciseIds.length > 0 || extraExerciseIds.length > 0) {
+    throw new AppError(
+      `Workout day completion must include exactly the scheduled exercises. Missing: ${missingExerciseIds.join(", ") || "none"}, extra: ${extraExerciseIds.join(", ") || "none"}.`,
+      httpStatus.BAD_REQUEST
+    );
+  }
+
+  const exerciseDocs = await Exercise.find({
+    _id: { $in: submittedExerciseIds },
+    isActive: true,
+    status: "published",
+  }).select("_id exerciseName");
+
+  if (exerciseDocs.length !== submittedExerciseIds.length) {
+    throw new AppError("Some submitted exercises are invalid or unavailable.", httpStatus.BAD_REQUEST);
+  }
+
+  const exerciseNameById = new Map(exerciseDocs.map((exercise) => [exercise._id.toString(), exercise.exerciseName]));
+  const completionTime = new Date(
+    Math.max(...parsedExercises.map((entry) => entry.completedAt.getTime()), Date.now())
+  );
+
+  let session = await WorkoutSession.findOne({
+    user: req.user._id,
+    program: program._id,
+    weekStartDate,
+    dayIndex,
+  });
+
+  if (!session) {
+    session = await WorkoutSession.create({
+      user: req.user._id,
+      program: program._id,
+      weekStartDate,
+      dayIndex,
+      scheduledExercises: scheduledExerciseIds.map((exerciseId) => new mongoose.Types.ObjectId(exerciseId)),
+      completedExercises: [],
+      status: "in_progress",
+    });
+  }
+
+  await WorkoutLog.deleteMany({
+    user: req.user._id,
+    sessionId: session._id,
+  });
+
+  const logsPayload = parsedExercises.map((entry) => ({
+    user: req.user._id,
+    program: program._id,
+    exercise: entry.exerciseId,
+    sessionId: session._id,
+    dayIndex,
+    weekStartDate,
+    exerciseName: exerciseNameById.get(entry.exerciseId) || "",
+    sets: entry.sets,
+    caloriesBurned: entry.caloriesBurned,
+    durationMinutes: entry.durationMinutes,
+    trainingVolume: calculateTrainingVolumeFromSets(entry.sets),
+    notes: "",
+    completedAt: entry.completedAt,
+  }));
+
+  const savedLogs = await WorkoutLog.insertMany(logsPayload);
+
+  const totals = savedLogs.reduce(
+    (acc, log) => ({
+      scheduledExercises: scheduledExerciseIds.length,
+      completedExercises: acc.completedExercises + 1,
+      durationMinutes: Number((acc.durationMinutes + Number(log.durationMinutes || 0)).toFixed(2)),
+      caloriesBurned: Number((acc.caloriesBurned + Number(log.caloriesBurned || 0)).toFixed(2)),
+      trainingVolume: Number((acc.trainingVolume + Number(log.trainingVolume || 0)).toFixed(2)),
+    }),
+    {
+      scheduledExercises: scheduledExerciseIds.length,
+      completedExercises: 0,
+      durationMinutes: 0,
+      caloriesBurned: 0,
+      trainingVolume: 0,
+    }
+  );
+
+  session.scheduledExercises = scheduledExerciseIds.map((exerciseId) => new mongoose.Types.ObjectId(exerciseId));
+  session.completedExercises = submittedExerciseIds.map((exerciseId) => new mongoose.Types.ObjectId(exerciseId));
+  session.status = "completed";
+  session.completedAt = completionTime;
+  session.totals = totals;
+  await session.save();
+
+  const providedExperienceLevel =
+    Object.hasOwn(req.body, "experienceLevel") || Object.hasOwn(req.body, "difficulty");
+  const providedNotes = Object.hasOwn(req.body, "notes");
+  let workoutExperience = null;
+
+  if (providedExperienceLevel || providedNotes) {
+    const experienceLevel = providedExperienceLevel
+      ? normalizeWorkoutExperienceLevel(req.body.experienceLevel || req.body.difficulty)
+      : "intermediate";
+    const notes = asString(req.body.notes);
+
+    workoutExperience = await WorkoutExperience.create({
+      user: req.user._id,
+      program: program._id,
+      experienceLevel,
+      notes,
+      completedAt: completionTime,
+    });
+  }
+
+  await touchUserProgram({
+    userId: req.user._id,
+    programId: program._id,
+    touchedAt: completionTime,
+  });
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Workout day completed successfully.",
+    data: {
+      sessionId: session._id,
+      program: {
+        id: program._id,
+        programName: program.programName,
+      },
+      weekStartDate: session.weekStartDate,
+      dayIndex: session.dayIndex,
+      totals: session.totals,
+      logsCreated: savedLogs.length,
+      experience: workoutExperience
+        ? {
+            id: workoutExperience._id,
+            experienceLevel: workoutExperience.experienceLevel,
+            notes: workoutExperience.notes,
+            completedAt: workoutExperience.completedAt,
+          }
+        : null,
     },
   });
 });
@@ -1105,10 +1385,15 @@ export const getWorkoutLogs = catchAsync(async (req, res) => {
     data: logs.map((log) => ({
       id: log._id,
       program: log.program,
+      exercise: log.exercise,
+      sessionId: log.sessionId,
+      dayIndex: log.dayIndex,
+      weekStartDate: log.weekStartDate,
       exerciseName: log.exerciseName,
       sets: log.sets,
       caloriesBurned: log.caloriesBurned,
       durationMinutes: log.durationMinutes,
+      trainingVolume: log.trainingVolume,
       completedAt: log.completedAt,
       notes: log.notes,
       createdAt: log.createdAt,

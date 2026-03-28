@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "migrate:program-workout-days": "node scripts/migrateProgramWorkoutDays.js"
   },
   "keywords": [
     "express",

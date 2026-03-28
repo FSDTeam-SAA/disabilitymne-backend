@@ -8,6 +8,8 @@ import { Payment } from "../models/payment.model.js";
 import { SubscriptionPlan } from "../models/subscriptionPlan.model.js";
 import { SupportTicket } from "../models/supportTicket.model.js";
 import { WorkoutExperience } from "../models/workoutExperience.model.js";
+import { WorkoutLog } from "../models/workoutLog.model.js";
+import { WorkoutSession } from "../models/workoutSession.model.js";
 import { PLAN_KEYS, SUBSCRIPTION_PLANS } from "../constants/subscriptionPlans.js";
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
@@ -114,6 +116,18 @@ const parseObjectId = (value, fieldName) => {
   }
 
   return id;
+};
+
+const parseDate = (value, fieldName) => {
+  const raw = asString(value);
+  if (!raw) return null;
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new AppError(`${fieldName} must be a valid date.`, httpStatus.BAD_REQUEST);
+  }
+
+  return parsed;
 };
 
 const normalizePlanKey = (value, required = true) => {
@@ -308,6 +322,57 @@ const toAdminWorkoutExperienceResponse = (experience) => ({
   completedAt: experience.completedAt,
   createdAt: experience.createdAt,
   updatedAt: experience.updatedAt,
+});
+
+const toYmd = (value) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const toAdminWorkoutProgressLogRow = (log) => ({
+  id: log._id,
+  user:
+    log.user && typeof log.user === "object"
+      ? {
+          id: log.user._id,
+          firstName: log.user.firstName || "",
+          lastName: log.user.lastName || "",
+          email: log.user.email || "",
+        }
+      : null,
+  program:
+    log.program && typeof log.program === "object"
+      ? {
+          id: log.program._id,
+          programName: log.program.programName || "",
+        }
+      : log.program || null,
+  exercise:
+    log.exercise && typeof log.exercise === "object"
+      ? {
+          id: log.exercise._id,
+          exerciseName: log.exercise.exerciseName || log.exerciseName || "",
+        }
+      : log.exercise
+      ? {
+          id: log.exercise,
+          exerciseName: log.exerciseName || "",
+        }
+      : null,
+  sessionId: log.sessionId || null,
+  dayIndex: log.dayIndex || null,
+  weekStartDate: log.weekStartDate || null,
+  sets: log.sets || [],
+  caloriesBurned: Number(log.caloriesBurned || 0),
+  durationMinutes: Number(log.durationMinutes || 0),
+  trainingVolume: Number(log.trainingVolume || 0),
+  completedAt: log.completedAt,
+  createdAt: log.createdAt,
 });
 
 const getAdminProfileBodyFromRequest = (req) => {
@@ -631,6 +696,166 @@ export const getAdminWorkoutExperienceById = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     data: toAdminWorkoutExperienceResponse(experience),
+  });
+});
+
+export const getAdminWorkoutProgress = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+
+  const startDate = parseDate(req.query.startDate, "startDate");
+  const endDate = parseDate(req.query.endDate, "endDate");
+  if (startDate && endDate && startDate > endDate) {
+    throw new AppError("startDate must be earlier than or equal to endDate.", httpStatus.BAD_REQUEST);
+  }
+
+  const completedAtFilter = {};
+  if (startDate) {
+    completedAtFilter.$gte = startDate;
+  }
+  if (endDate) {
+    const inclusiveEnd = new Date(endDate);
+    inclusiveEnd.setHours(23, 59, 59, 999);
+    completedAtFilter.$lte = inclusiveEnd;
+  }
+
+  const sessionFilter = { status: "completed" };
+  const logFilter = {};
+
+  if (Object.keys(completedAtFilter).length > 0) {
+    sessionFilter.completedAt = completedAtFilter;
+    logFilter.completedAt = completedAtFilter;
+  }
+
+  if (req.query.userId) {
+    const userId = parseObjectId(req.query.userId, "userId");
+    sessionFilter.user = userId;
+    logFilter.user = userId;
+  }
+
+  if (req.query.programId) {
+    const programId = parseObjectId(req.query.programId, "programId");
+    sessionFilter.program = programId;
+    logFilter.program = programId;
+  }
+
+  if (req.query.exerciseId) {
+    logFilter.exercise = parseObjectId(req.query.exerciseId, "exerciseId");
+  }
+
+  const [sessions, logs, total, strengthRows] = await Promise.all([
+    WorkoutSession.find(sessionFilter)
+      .select("weekStartDate totals scheduledExercises completedExercises completedAt")
+      .lean(),
+    WorkoutLog.find(logFilter)
+      .sort({ completedAt: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("user", "firstName lastName email")
+      .populate("program", "programName")
+      .populate("exercise", "exerciseName"),
+    WorkoutLog.countDocuments(logFilter),
+    WorkoutLog.aggregate([
+      {
+        $match: {
+          ...logFilter,
+          exercise: { ...(logFilter.exercise ? { $eq: logFilter.exercise } : { $ne: null }) },
+        },
+      },
+      {
+        $unwind: {
+          path: "$sets",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $group: {
+          _id: {
+            weekStartDate: "$weekStartDate",
+            exercise: "$exercise",
+          },
+          exerciseName: { $first: "$exerciseName" },
+          bestWeightKg: { $max: { $ifNull: ["$sets.weightKg", 0] } },
+          bestReps: { $max: { $ifNull: ["$sets.reps", 0] } },
+          totalVolume: {
+            $sum: {
+              $multiply: [
+                { $ifNull: ["$sets.reps", 0] },
+                { $ifNull: ["$sets.weightKg", 0] },
+              ],
+            },
+          },
+        },
+      },
+      { $sort: { "_id.weekStartDate": 1, exerciseName: 1 } },
+    ]),
+  ]);
+
+  const adherenceByWeekMap = new Map();
+  for (const session of sessions) {
+    const weekKey = toYmd(session.weekStartDate || session.completedAt);
+    if (!weekKey) continue;
+
+    const scheduledExercises = Number(session?.totals?.scheduledExercises || session?.scheduledExercises?.length || 0);
+    const completedExercises = Number(session?.totals?.completedExercises || session?.completedExercises?.length || 0);
+    const current = adherenceByWeekMap.get(weekKey) || {
+      weekStartDate: weekKey,
+      scheduledExercises: 0,
+      completedExercises: 0,
+      adherencePercent: 0,
+    };
+
+    current.scheduledExercises += scheduledExercises;
+    current.completedExercises += completedExercises;
+    current.adherencePercent = current.scheduledExercises > 0
+      ? Number(((current.completedExercises / current.scheduledExercises) * 100).toFixed(2))
+      : 0;
+
+    adherenceByWeekMap.set(weekKey, current);
+  }
+
+  const adherenceByWeek = [...adherenceByWeekMap.values()].sort((a, b) =>
+    new Date(a.weekStartDate).getTime() - new Date(b.weekStartDate).getTime()
+  );
+
+  const strengthTrend = strengthRows.map((row) => ({
+    weekStartDate: row._id?.weekStartDate || null,
+    exerciseId: row._id?.exercise || null,
+    exerciseName: row.exerciseName || "",
+    bestWeightKg: Number(Number(row.bestWeightKg || 0).toFixed(2)),
+    bestReps: Number(row.bestReps || 0),
+    totalVolume: Number(Number(row.totalVolume || 0).toFixed(2)),
+  }));
+
+  const totalScheduledExercises = adherenceByWeek.reduce((sum, row) => sum + Number(row.scheduledExercises || 0), 0);
+  const totalCompletedExercises = adherenceByWeek.reduce((sum, row) => sum + Number(row.completedExercises || 0), 0);
+  const totalTrainingVolume = strengthTrend.reduce((sum, row) => sum + Number(row.totalVolume || 0), 0);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: {
+      summary: {
+        completedWorkoutDays: sessions.length,
+        scheduledExercises: totalScheduledExercises,
+        completedExercises: totalCompletedExercises,
+        adherencePercent: totalScheduledExercises > 0
+          ? Number(((totalCompletedExercises / totalScheduledExercises) * 100).toFixed(2))
+          : 0,
+        totalTrainingVolume: Number(totalTrainingVolume.toFixed(2)),
+      },
+      series: {
+        adherenceByWeek,
+        strengthTrend,
+      },
+      recentLogs: logs.map(toAdminWorkoutProgressLogRow),
+    },
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
   });
 });
 
