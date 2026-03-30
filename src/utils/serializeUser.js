@@ -33,6 +33,38 @@ export const serializeUser = (user) => ({
   trialEndsAt: user.trialEndsAt || null,
   subscriptionStartedAt: user.subscriptionStartedAt || null,
   subscriptionEndsAt: user.subscriptionEndsAt || null,
+  adaptiveNutrition: user.adaptiveNutrition
+    ? {
+        goal: user.adaptiveNutrition.goal || "maintenance",
+        currentDailyCalories: Number(user.adaptiveNutrition.currentDailyCalories || 0),
+        startedAt: user.adaptiveNutrition.startedAt || null,
+        lastAdjustedAt: user.adaptiveNutrition.lastAdjustedAt || null,
+        lastAdjustmentDeltaKcal: Number(user.adaptiveNutrition.lastAdjustmentDeltaKcal || 0),
+        lastCurrentWeekAvgKg:
+          user.adaptiveNutrition.lastCurrentWeekAvgKg === null ||
+          user.adaptiveNutrition.lastCurrentWeekAvgKg === undefined
+            ? null
+            : Number(user.adaptiveNutrition.lastCurrentWeekAvgKg),
+        lastPreviousWeekAvgKg:
+          user.adaptiveNutrition.lastPreviousWeekAvgKg === null ||
+          user.adaptiveNutrition.lastPreviousWeekAvgKg === undefined
+            ? null
+            : Number(user.adaptiveNutrition.lastPreviousWeekAvgKg),
+        lastWeeklyChangePercent:
+          user.adaptiveNutrition.lastWeeklyChangePercent === null ||
+          user.adaptiveNutrition.lastWeeklyChangePercent === undefined
+            ? null
+            : Number(user.adaptiveNutrition.lastWeeklyChangePercent),
+      }
+    : null,
+  isSponsored: Boolean(user.isSponsored),
+  sponsorship: user.sponsorship
+    ? {
+        note: user.sponsorship.note || "",
+        grantedBy: user.sponsorship.grantedBy || null,
+        grantedAt: user.sponsorship.grantedAt || null,
+      }
+    : null,
   lastLoginAt: user.lastLoginAt || null,
   accountStatus: user.accountStatus || (user.isActive ? "active" : "deactivated"),
   isActive: Boolean(user.isActive),

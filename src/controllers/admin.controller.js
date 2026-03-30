@@ -256,10 +256,12 @@ const toUserRow = (user) => ({
   mobilityType: user.mobilityType || "",
   status: user.accountStatus || (user.isActive ? "active" : "deactivated"),
   isActive: Boolean(user.isActive),
+  isSponsored: Boolean(user.isSponsored),
+  sponsorshipNote: asString(user?.sponsorship?.note) || "",
 });
 
 const toPlanResponse = (plan) => ({
-  key: plan.key,
+  key: normalizeSubscriptionPlanKey(plan.key) || String(plan.key || "").toLowerCase(),
   name: plan.name,
   price: plan.price,
   currency: plan.currency,
@@ -439,6 +441,40 @@ const ensurePlanDoc = async (planKey) => {
   return planDoc;
 };
 
+const toCanonicalPlanList = (plans = []) => {
+  const byKey = new Map();
+
+  for (const plan of plans) {
+    const canonicalKey = normalizeSubscriptionPlanKey(plan.key) || String(plan.key || "").toLowerCase();
+    if (!canonicalKey) continue;
+
+    const rawKey = String(plan.key || "").toLowerCase();
+    const score = (rawKey === canonicalKey ? 2 : 0) + (plan.isActive ? 1 : 0);
+
+    const existing = byKey.get(canonicalKey);
+    if (!existing || score > existing.score) {
+      byKey.set(canonicalKey, { score, plan });
+      continue;
+    }
+
+    if (score === existing.score) {
+      const existingUpdatedAt = new Date(existing.plan.updatedAt || existing.plan.createdAt || 0).getTime();
+      const currentUpdatedAt = new Date(plan.updatedAt || plan.createdAt || 0).getTime();
+      if (currentUpdatedAt > existingUpdatedAt) {
+        byKey.set(canonicalKey, { score, plan });
+      }
+    }
+  }
+
+  return Array.from(byKey.values())
+    .map((item) => item.plan)
+    .sort((a, b) => {
+      const sortOrderDiff = Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+      if (sortOrderDiff !== 0) return sortOrderDiff;
+      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+    });
+};
+
 export const getDashboardOverview = catchAsync(async (req, res) => {
   const [totalUsers, monthlyUsers, quarterlyUsers, annualUsers, premiumUsers, revenueAgg, recentUsers] = await Promise.all([
     User.countDocuments({ role: "user" }),
@@ -450,7 +486,7 @@ export const getDashboardOverview = catchAsync(async (req, res) => {
     User.find({ role: "user" })
       .sort({ createdAt: -1 })
       .limit(8)
-      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive"),
+      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive isSponsored sponsorship"),
   ]);
 
   const totalRevenue = revenueAgg[0]?.total || 0;
@@ -552,6 +588,11 @@ export const getAdminUsers = catchAsync(async (req, res) => {
     }
   }
 
+  const isSponsoredFilter = parseBoolean(req.query.isSponsored, "isSponsored");
+  if (isSponsoredFilter !== undefined) {
+    filter.isSponsored = isSponsoredFilter;
+  }
+
   const allowedSortFields = new Set(["createdAt", "firstName", "email", "selectedPlan", "accountStatus"]);
   const sortField = allowedSortFields.has(asString(req.query.sortBy)) ? asString(req.query.sortBy) : "createdAt";
   const sortOrder = asString(req.query.sortOrder).toLowerCase() === "asc" ? 1 : -1;
@@ -561,7 +602,7 @@ export const getAdminUsers = catchAsync(async (req, res) => {
       .sort({ [sortField]: sortOrder, createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive"),
+      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive isSponsored sponsorship"),
     User.countDocuments(filter),
   ]);
 
@@ -894,6 +935,75 @@ export const getAdminWorkoutProgress = catchAsync(async (req, res) => {
   });
 });
 
+export const createAdminUser = catchAsync(async (req, res) => {
+  const firstName = asString(req.body.firstName);
+  const lastName = asString(req.body.lastName);
+  const phone = asString(req.body.phone);
+  const sponsorshipNote = asString(req.body.sponsorshipNote || req.body.note);
+  const email = asString(req.body.email).toLowerCase();
+  const temporaryPassword = asString(
+    req.body.temporaryPassword || req.body.tempPassword || req.body.password
+  );
+  const planKey = normalizePlanKey(req.body.planKey);
+
+  if (!firstName) {
+    throw new AppError("firstName is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!email) {
+    throw new AppError("email is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (!temporaryPassword) {
+    throw new AppError("temporaryPassword is required.", httpStatus.BAD_REQUEST);
+  }
+
+  if (temporaryPassword.length < 8) {
+    throw new AppError("temporaryPassword must be at least 8 characters.", httpStatus.BAD_REQUEST);
+  }
+
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
+    throw new AppError("User with this email already exists.", httpStatus.CONFLICT);
+  }
+
+  const plan = await ensurePlanDoc(planKey);
+  if (!plan.isActive) {
+    throw new AppError("Selected plan must be active.", httpStatus.BAD_REQUEST);
+  }
+  const canonicalPlanKey = normalizeSubscriptionPlanKey(plan.key) || planKey;
+  const now = new Date();
+
+  const user = await User.create({
+    role: "user",
+    firstName,
+    lastName,
+    email,
+    phone,
+    password: temporaryPassword,
+    selectedPlan: canonicalPlanKey,
+    subscriptionStatus: "active",
+    trialActivatedAt: null,
+    trialEndsAt: null,
+    subscriptionStartedAt: now,
+    subscriptionEndsAt: null,
+    accountStatus: "active",
+    isActive: true,
+    isSponsored: true,
+    sponsorship: {
+      note: sponsorshipNote,
+      grantedBy: req.user._id,
+      grantedAt: now,
+    },
+  });
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Sponsored user created successfully.",
+    data: toUserRow(user),
+  });
+});
+
 export const updateAdminUserStatus = catchAsync(async (req, res) => {
   const { userId } = req.params;
 
@@ -1024,10 +1134,11 @@ export const getAdminSubscriptionPlans = catchAsync(async (req, res) => {
   const filter = includeInactive ? {} : { isActive: true };
 
   const plans = await SubscriptionPlan.find(filter).sort({ sortOrder: 1, createdAt: 1 });
+  const canonicalPlans = toCanonicalPlanList(plans);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: plans.map(toPlanResponse),
+    data: canonicalPlans.map(toPlanResponse),
   });
 });
 

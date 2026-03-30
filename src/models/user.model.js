@@ -17,6 +17,7 @@ const MOBILITY_TYPES = [
   "other",
 ];
 const FITNESS_EXPERIENCE_LEVELS = ["beginner", "intermediate", "advanced"];
+const NUTRITION_GOALS = ["fat_loss", "maintenance", "muscle_gain"];
 
 const accessibilityPreferencesSchema = new mongoose.Schema(
   {
@@ -228,6 +229,69 @@ const favoriteMealSchema = new mongoose.Schema(
   { _id: true }
 );
 
+const adaptiveNutritionStateSchema = new mongoose.Schema(
+  {
+    goal: {
+      type: String,
+      enum: NUTRITION_GOALS,
+      default: "maintenance",
+    },
+    currentDailyCalories: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    startedAt: {
+      type: Date,
+      default: null,
+    },
+    lastAdjustedAt: {
+      type: Date,
+      default: null,
+    },
+    lastAdjustmentDeltaKcal: {
+      type: Number,
+      default: 0,
+    },
+    lastCurrentWeekAvgKg: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    lastPreviousWeekAvgKg: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    lastWeeklyChangePercent: {
+      type: Number,
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
+const sponsorshipSchema = new mongoose.Schema(
+  {
+    note: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [500, "Sponsorship note should not exceed 500 characters"],
+    },
+    grantedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    grantedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
 const mediaAssetSchema = new mongoose.Schema(
   {
     url: { type: String, required: true, trim: true },
@@ -349,6 +413,28 @@ const userSchema = new mongoose.Schema(
     favoriteMeals: {
       type: [favoriteMealSchema],
       default: [],
+    },
+    adaptiveNutrition: {
+      type: adaptiveNutritionStateSchema,
+      default: () => ({
+        goal: "maintenance",
+        currentDailyCalories: 0,
+        startedAt: null,
+        lastAdjustedAt: null,
+        lastAdjustmentDeltaKcal: 0,
+        lastCurrentWeekAvgKg: null,
+        lastPreviousWeekAvgKg: null,
+        lastWeeklyChangePercent: null,
+      }),
+    },
+    isSponsored: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    sponsorship: {
+      type: sponsorshipSchema,
+      default: null,
     },
     onboardingStep: {
       type: Number,
