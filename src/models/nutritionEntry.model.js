@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 const MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "other"];
-const ENTRY_SOURCES = ["manual", "usda"];
+const ENTRY_SOURCES = ["manual", "usda", "fatsecret"];
 
 const nutritionEntrySchema = new mongoose.Schema(
   {

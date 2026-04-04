@@ -1,25 +1,46 @@
 NUTRITION SCREEN API + FIELD MAPPING (SEARCH -> CHOOSE -> UPDATE -> CALCULATOR)
-Generated: 2026-03-16
+Generated: 2026-04-04
 
-Base Path:
+Base Paths:
 - /api/v1/nutrition
+- /api/food (search/suggestions/detail alias for testing)
 
 Auth:
 - Authorization: Bearer {{mobileAccessToken}}
+
+IMPORTANT COMPATIBILITY NOTE:
+- The response field is still named `fdcId` for Flutter compatibility.
+- That field now carries a backend-generated public FatSecret food id, not a USDA id.
+- When posting tracked entries, use `source: "fatsecret"` for FatSecret-backed foods, or omit `source` and let backend infer it from the public `fdcId`.
+- Legacy clients that still send `source: "usda"` with a FatSecret public id are auto-normalized by the backend.
 
 =====================================================================
 1) SEARCH PAGE (left screen: list with + icon)
 =====================================================================
 
-API 1: Suggestions (optional for autocomplete)
+API 1: Suggestions (autocomplete)
 - GET {{baseUrl}}/api/v1/nutrition/foods/suggestions?q=apple&limit=10
+- Alias: GET {{baseUrl}}/api/food/suggestions?q=apple&limit=10
+
+Behavior:
+- Uses FatSecret-backed suggestions.
+- If FatSecret premier autocomplete is not available on the account, backend falls back to normalized search-based suggestions.
 
 Response fields:
 - data[].label
 - data[].fdcId
+  - usually present in the current fallback path
+  - may be null in future if direct FatSecret premier autocomplete is enabled
 
 API 2: Search Results (main list cards)
 - GET {{baseUrl}}/api/v1/nutrition/foods/search?query=apple&page=1&pageSize=20
+- Alias: GET {{baseUrl}}/api/food/search?q=apple
+
+Behavior:
+- Generic foods are prioritized
+- branded/store/restaurant noise is removed
+- similar results are deduplicated
+- serving is standardized to 100g when available
 
 Response fields for card:
 - data.foods[].fdcId
@@ -39,6 +60,7 @@ Card subtitle format example:
 
 API: Food Details by fdcId
 - GET {{baseUrl}}/api/v1/nutrition/foods/{{fdcId}}
+- Alias: GET {{baseUrl}}/api/food/{{fdcId}}
 
 Response fields:
 - data.fdcId
@@ -53,7 +75,7 @@ Response fields:
 - data.portionOptions[]:
   - label
   - gramWeight
-  - estimated (boolean; true means fallback/estimated option)
+  - estimated (boolean; true means backend-estimated fallback option)
 
 UI state fields:
 - quantity input -> local number
@@ -68,22 +90,22 @@ Live calculation formula (frontend):
 - fat      = nutrientsPer100g.fatG          * (totalGrams / 100)
 
 =====================================================================
-3) "HOW MUCH" DROPDOWN (slice/half/whole/tablespoon/gram)
+3) "HOW MUCH" DROPDOWN (slice/whole/serving/gram)
 =====================================================================
 
 Source:
 - GET /nutrition/foods/:fdcId -> data.portionOptions[]
 
 Handling rules:
-1) Use USDA-provided portions first.
-2) Use backend fallback options (Gram always, and Serving/Half/Whole/Slice/Tablespoon when detectable).
+1) Use backend-provided portion options first.
+2) Prefer the normalized 100 g serving when it exists.
 3) If selected option has estimated=true, still usable but show "(estimated)" in UI if needed.
-4) If no suitable option, keep "Gram" + quantity input.
+4) Gram option is always available as fallback.
 
 Posting strategy for selected option:
-- quantity = user number (e.g., 2.5)
-- servingLabel = selectedOption.label (e.g., "Whole")
-- servingGrams = selectedOption.gramWeight (e.g., 125)
+- quantity = user number (e.g., 1.25)
+- servingLabel = selectedOption.label (e.g., "100 g serving")
+- servingGrams = selectedOption.gramWeight (e.g., 100)
 - backend computes totalGrams automatically when totalGrams not sent
 
 =====================================================================
@@ -102,7 +124,7 @@ Required request fields:
 
 Recommended request fields (for precise nutrition):
 - fdcId
-- source ("usda")
+- source ("fatsecret") OR omit source
 - servingGrams
 - nutrientsPer100g { caloriesKcal, proteinG, carbsG, fatG, fiberG, sugarG }
 
@@ -116,11 +138,11 @@ Example payload:
   "date": "2026-03-02",
   "mealType": "breakfast",
   "foodName": "Apple",
-  "fdcId": 454004,
-  "source": "usda",
+  "fdcId": 5000005367,
+  "source": "fatsecret",
   "quantity": 1,
-  "servingLabel": "Whole",
-  "servingGrams": 125,
+  "servingLabel": "100 g serving",
+  "servingGrams": 100,
   "nutrientsPer100g": {
     "caloriesKcal": 52,
     "proteinG": 0.3,

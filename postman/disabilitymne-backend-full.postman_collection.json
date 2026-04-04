@@ -1197,11 +1197,11 @@
                 }
               ]
             },
-            "description": "Autocomplete list for search box. Use data[].label + data[].fdcId."
+            "description": "Autocomplete list for search box. Suggestions are FatSecret-backed. Use data[].label. data[].fdcId is available for the current fallback path and may be null if direct FatSecret premier autocomplete is enabled later. Alias route also available: /api/food/suggestions."
           }
         },
         {
-          "name": "Food Search Screen - USDA Search Results",
+          "name": "Food Search Screen - FatSecret Search Results",
           "request": {
             "method": "GET",
             "header": [],
@@ -1216,7 +1216,7 @@
                 }
               ]
             },
-            "description": "Search result cards source. Use foods[].display.caloriesKcal, foods[].defaultPortionOption, foods[].portionOptions, foods[].nutrientsPer100g."
+            "description": "FatSecret-backed normalized search results. Generic foods are prioritized, branded/restaurant noise is removed, and the default serving is standardized to 100g when available. Use foods[].display.caloriesKcal, foods[].defaultPortionOption, foods[].portionOptions, foods[].nutrientsPer100g. Alias route also available: /api/food/search?q=apple."
           },
           "event": [
             {
@@ -1234,7 +1234,7 @@
           ]
         },
         {
-          "name": "Food Detail Screen - USDA Food Details",
+          "name": "Food Detail Screen - FatSecret Food Details",
           "request": {
             "method": "GET",
             "header": [],
@@ -1249,7 +1249,7 @@
                 }
               ]
             },
-            "description": "Food detail + unit dropdown source. Use data.portionOptions[] (label, gramWeight, estimated), data.defaultPortionOption, data.nutrientsPer100g, data.display."
+            "description": "FatSecret-backed food detail + unit dropdown source. Use data.portionOptions[] (label, gramWeight, estimated), data.defaultPortionOption, data.nutrientsPer100g, data.display. Default serving is normalized to 100g when available."
           },
           "event": [
             {
@@ -1290,14 +1290,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"date\": \"2026-03-02\",\n  \"mealType\": \"breakfast\",\n  \"foodName\": \"Apple\",\n  \"fdcId\": \"{{fdcId}}\",\n  \"source\": \"usda\",\n  \"quantity\": 2.5,\n  \"servingLabel\": \"Gram\",\n  \"totalGrams\": 125,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"isFavorite\": true,\n  \"notes\": \"Breakfast fruit\"\n}",
+              "raw": "{\n  \"date\": \"2026-03-02\",\n  \"mealType\": \"breakfast\",\n  \"foodName\": \"Apple\",\n  \"fdcId\": \"{{fdcId}}\",\n  \"source\": \"fatsecret\",\n  \"quantity\": 125,\n  \"servingLabel\": \"Gram\",\n  \"totalGrams\": 125,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"isFavorite\": true,\n  \"notes\": \"Breakfast fruit\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Track entry using explicit totalGrams. Keys: date/entryDate, mealType, foodName, fdcId, quantity, servingLabel, totalGrams or servingGrams, nutrientsPer100g."
+            "description": "Track entry using explicit totalGrams. For FatSecret-backed foods, use source=fatsecret (or omit source and let backend infer it from the public fdcId). Keys: date/entryDate, mealType, foodName, fdcId, quantity, servingLabel, totalGrams or servingGrams, nutrientsPer100g."
           },
           "event": [
             {
@@ -1335,10 +1335,10 @@
                 }
               ]
             },
-            "description": "Track entry from selected portion. Send quantity + servingLabel + servingGrams; backend computes totalGrams.",
+            "description": "Track entry from selected portion. Send quantity + servingLabel + servingGrams; backend computes totalGrams. For FatSecret-backed foods, use source=fatsecret (or omit source and let backend infer it from the public fdcId).",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"date\": \"2026-03-02\",\n  \"mealType\": \"breakfast\",\n  \"foodName\": \"Apple\",\n  \"fdcId\": \"{{fdcId}}\",\n  \"source\": \"usda\",\n  \"quantity\": 1,\n  \"servingLabel\": \"Whole\",\n  \"servingGrams\": 125,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"isFavorite\": true\n}",
+              "raw": "{\n  \"date\": \"2026-03-02\",\n  \"mealType\": \"breakfast\",\n  \"foodName\": \"Apple\",\n  \"fdcId\": \"{{fdcId}}\",\n  \"source\": \"fatsecret\",\n  \"quantity\": 1,\n  \"servingLabel\": \"100 g serving\",\n  \"servingGrams\": 100,\n  \"nutrientsPer100g\": {\n    \"caloriesKcal\": 52,\n    \"proteinG\": 0.3,\n    \"carbsG\": 13.8,\n    \"fatG\": 0.2,\n    \"fiberG\": 2.4,\n    \"sugarG\": 10.4\n  },\n  \"isFavorite\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
