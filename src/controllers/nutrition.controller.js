@@ -5,11 +5,7 @@ import { NutritionEntry } from "../models/nutritionEntry.model.js";
 import { Recipe } from "../models/recipe.model.js";
 import { WorkoutLog } from "../models/workoutLog.model.js";
 import { isPremiumActiveUser } from "../utils/access.js";
-
-const USDA_API_BASE = "https://api.nal.usda.gov/fdc/v1";
-const USDA_API_KEY =
-  process.env.USDA_API_KEY ||
-  "VX7AHDHEBkC30WvicvVaaWFPhstMwb7nmFczm6Br";
+import { isFatSecretPublicFoodId, fatsecretService } from "../services/fatsecret.service.js";
 
 const GOAL_KCAL_RANGE = {
   fat_loss: { min: 22, max: 26 },
@@ -23,15 +19,6 @@ const DEFAULT_MACRO_PER_KG = {
   fat: 0.8,
 };
 
-const NUTRIENT_KEYS = {
-  caloriesKcal: ["1008", "208", "Energy"],
-  proteinG: ["1003", "203", "Protein"],
-  carbsG: ["1005", "205", "Carbohydrate"],
-  fatG: ["1004", "204", "Total lipid (fat)"],
-  fiberG: ["1079", "291", "Fiber, total dietary"],
-  sugarG: ["2000", "269", "Total Sugars"],
-};
-
 const DIARY_MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "other"];
 const DIARY_MEAL_TYPE_SET = new Set(DIARY_MEAL_TYPES);
 const DIARY_MEAL_LABELS = {
@@ -41,7 +28,7 @@ const DIARY_MEAL_LABELS = {
   snack: "Snack",
   other: "Other",
 };
-const DIARY_SOURCE_SET = new Set(["manual", "usda"]);
+const DIARY_SOURCE_SET = new Set(["manual", "usda", "fatsecret"]);
 const MEAL_KCAL_DISTRIBUTION = {
   breakfast: { min: 0.2, max: 0.3 },
   lunch: { min: 0.25, max: 0.35 },
@@ -135,275 +122,6 @@ const resolveWeightKgFromSource = (source, user, required = true) => {
     "weightKg is required (or set profile weight and retry).",
     httpStatus.BAD_REQUEST
   );
-};
-
-const findNutrientValue = (foodNutrients, aliases) => {
-  if (!Array.isArray(foodNutrients)) return null;
-
-  const aliasSet = new Set(aliases.map((alias) => String(alias).toLowerCase()));
-  for (const nutrient of foodNutrients) {
-    const nutrientId = String(nutrient.nutrientId || nutrient.nutrient?.id || "").toLowerCase();
-    const nutrientNumber = String(nutrient.nutrientNumber || nutrient.nutrient?.number || "").toLowerCase();
-    const nutrientName = String(nutrient.nutrientName || nutrient.nutrient?.name || "").toLowerCase();
-    if (aliasSet.has(nutrientId) || aliasSet.has(nutrientNumber) || aliasSet.has(nutrientName)) {
-      const value = Number(nutrient.value ?? nutrient.amount);
-      if (Number.isFinite(value)) return value;
-    }
-  }
-
-  return null;
-};
-
-const toFiniteNumber = (value) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const toPortionLabel = (portion = {}) => {
-  const amount = toFiniteNumber(portion.amount);
-  const measureUnit = asString(portion.measureUnit?.name || portion.measureUnit?.abbreviation || portion.measureUnitName);
-  const modifier = asString(portion.modifier || portion.portionDescription);
-  const parts = [];
-
-  if (amount && amount !== 1) {
-    parts.push(String(amount));
-  }
-  if (measureUnit) {
-    parts.push(measureUnit);
-  }
-  if (modifier) {
-    parts.push(modifier);
-  }
-
-  return parts.join(" ").trim() || "Serving";
-};
-
-const convertToGrams = (value, unit) => {
-  const amount = toFiniteNumber(value);
-  if (!amount || amount <= 0) return null;
-
-  const normalized = asString(unit).toLowerCase();
-  if (["g", "gram", "grams"].includes(normalized)) return amount;
-  if (["oz", "onz", "ounce", "ounces"].includes(normalized)) return amount * 28.3495;
-  if (["ml", "milliliter", "milliliters"].includes(normalized)) return amount;
-
-  return null;
-};
-
-const upsertPortionOption = (list, option) => {
-  if (!option || !option.label || !Number.isFinite(Number(option.gramWeight))) return;
-  const gramWeight = round(Number(option.gramWeight), 1);
-  if (gramWeight <= 0) return;
-
-  const key = `${option.label.toLowerCase()}|${gramWeight}`;
-  if (list.some((item) => `${item.label.toLowerCase()}|${item.gramWeight}` === key)) return;
-
-  list.push({
-    id: option.id ?? null,
-    label: option.label,
-    amount: Number.isFinite(Number(option.amount)) ? Number(option.amount) : 1,
-    gramWeight,
-    estimated: Boolean(option.estimated),
-  });
-};
-
-const mapFoodPortions = (food = {}) => {
-  const portions = Array.isArray(food.foodPortions) ? food.foodPortions : [];
-  const mapped = portions.reduce((acc, portion) => {
-      const gramWeight = toFiniteNumber(portion.gramWeight);
-      if (!gramWeight || gramWeight <= 0) {
-        return acc;
-      }
-
-      acc.push({
-        id: portion.id ?? null,
-        label: toPortionLabel(portion),
-        amount: toFiniteNumber(portion.amount) || 1,
-        gramWeight: round(gramWeight, 1),
-      });
-
-      return acc;
-    }, []);
-
-  const servingGramWeight = convertToGrams(food.servingSize, food.servingSizeUnit);
-  if (servingGramWeight) {
-    const householdLabel = asString(food.householdServingFullText);
-    const servingLabel = householdLabel ? `Serving (${householdLabel})` : "Serving";
-    upsertPortionOption(mapped, {
-      label: servingLabel,
-      gramWeight: servingGramWeight,
-      amount: 1,
-    });
-    upsertPortionOption(mapped, {
-      label: "Half serving",
-      gramWeight: servingGramWeight / 2,
-      amount: 0.5,
-    });
-  }
-
-  const householdText = asString(food.householdServingFullText);
-  const householdMatch = householdText.match(/([0-9]+(?:\\.[0-9]+)?)\\s*(oz|onz|ounce|ounces)\\b/i);
-  if (!servingGramWeight && householdMatch) {
-    const gramsFromOz = convertToGrams(Number(householdMatch[1]), householdMatch[2]);
-    if (gramsFromOz) {
-      upsertPortionOption(mapped, {
-        label: `Serving (${householdText})`,
-        gramWeight: gramsFromOz,
-        amount: 1,
-      });
-    }
-  }
-
-  const descriptor = `${asString(food.description)} ${asString(
-    typeof food.foodCategory === "string" ? food.foodCategory : food.foodCategory?.description || food.brandedFoodCategory
-  )}`.toLowerCase();
-
-  if (servingGramWeight && /\b(apple|banana|orange|pear|peach|mango|avocado)\b/.test(descriptor)) {
-    upsertPortionOption(mapped, {
-      label: "Whole",
-      gramWeight: servingGramWeight,
-      estimated: true,
-    });
-    upsertPortionOption(mapped, {
-      label: "Half",
-      gramWeight: servingGramWeight / 2,
-      amount: 0.5,
-      estimated: true,
-    });
-    upsertPortionOption(mapped, {
-      label: "Slice",
-      gramWeight: servingGramWeight / 10,
-      estimated: true,
-    });
-  }
-
-  if (/\b(spread|peanut butter|butter|sauce|syrup|honey|oil)\b/.test(descriptor)) {
-    upsertPortionOption(mapped, {
-      label: "Tablespoon",
-      gramWeight: 15,
-      estimated: true,
-    });
-    upsertPortionOption(mapped, {
-      label: "Teaspoon",
-      gramWeight: 5,
-      estimated: true,
-    });
-  }
-
-  const result = [];
-  for (const portion of mapped) {
-    upsertPortionOption(result, portion);
-  }
-
-  if (!result.some((portion) => portion.label.toLowerCase() === "gram" && portion.gramWeight === 1)) {
-    result.push({
-      id: null,
-      label: "Gram",
-      amount: 1,
-      gramWeight: 1,
-      estimated: false,
-    });
-  }
-
-  return result.slice(0, 30);
-};
-
-const mapFoodSummary = (food) => {
-  const foodNutrients = Array.isArray(food.foodNutrients) ? food.foodNutrients : [];
-  const nutrients = {
-    caloriesKcal: findNutrientValue(foodNutrients, NUTRIENT_KEYS.caloriesKcal),
-    proteinG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.proteinG),
-    carbsG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.carbsG),
-    fatG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.fatG),
-    fiberG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.fiberG),
-    sugarG: findNutrientValue(foodNutrients, NUTRIENT_KEYS.sugarG),
-  };
-  const portionOptions = mapFoodPortions(food);
-  const defaultPortionOption =
-    portionOptions.find((portion) => /whole|serving/i.test(asString(portion.label))) ||
-    portionOptions.find((portion) => asString(portion.label).toLowerCase() === "gram") ||
-    portionOptions[0] ||
-    null;
-  const defaultPortionFactor = defaultPortionOption ? Number(defaultPortionOption.gramWeight || 0) / 100 : 0;
-  const display = {
-    caloriesKcal:
-      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.caloriesKcal))
-        ? round(Number(nutrients.caloriesKcal) * defaultPortionFactor, 1)
-        : null,
-    proteinG:
-      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.proteinG))
-        ? round(Number(nutrients.proteinG) * defaultPortionFactor, 1)
-        : null,
-    carbsG:
-      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.carbsG))
-        ? round(Number(nutrients.carbsG) * defaultPortionFactor, 1)
-        : null,
-    fatG:
-      defaultPortionFactor > 0 && Number.isFinite(Number(nutrients.fatG))
-        ? round(Number(nutrients.fatG) * defaultPortionFactor, 1)
-        : null,
-  };
-
-  return {
-    fdcId: food.fdcId,
-    description: food.description || "",
-    dataType: food.dataType || "",
-    brandName: food.brandName || "",
-    brandOwner: food.brandOwner || "",
-    foodCategory:
-      (typeof food.foodCategory === "string" && food.foodCategory) ||
-      food.foodCategory?.description ||
-      food.brandedFoodCategory ||
-      "",
-    servingSize: food.servingSize ?? null,
-    servingSizeUnit: food.servingSizeUnit || "",
-    nutrients,
-    nutrientsPer100g: nutrients,
-    portionOptions,
-    defaultPortionOption,
-    display,
-  };
-};
-
-const usdaFetch = async (url, options = {}) => {
-  const controller = new AbortController();
-  const timeoutMs = Number(process.env.USDA_TIMEOUT_MS || 12000);
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) {
-      const bodyText = await response.text();
-      throw new AppError(
-        `USDA API request failed (${response.status}): ${bodyText || "Unknown error"}`,
-        httpStatus.BAD_GATEWAY
-      );
-    }
-    return await response.json();
-  } catch (error) {
-    if (error.name === "AbortError") {
-      throw new AppError("USDA API request timed out.", httpStatus.GATEWAY_TIMEOUT);
-    }
-    if (error instanceof AppError) throw error;
-    throw new AppError(`USDA API error: ${error.message}`, httpStatus.BAD_GATEWAY);
-  } finally {
-    clearTimeout(timeout);
-  }
-};
-
-const buildUsdaSearchUrl = ({ query, pageNumber = 1, pageSize = 20 }) => {
-  if (!USDA_API_KEY) {
-    throw new AppError("USDA_API_KEY is missing. Please configure it in environment variables.", httpStatus.INTERNAL_SERVER_ERROR);
-  }
-
-  const params = new URLSearchParams({
-    api_key: USDA_API_KEY,
-    query,
-    pageNumber: String(pageNumber),
-    pageSize: String(pageSize),
-  });
-
-  return `${USDA_API_BASE}/foods/search?${params.toString()}`;
 };
 
 const normalizeDiaryDate = (value, fieldName = "date") => {
@@ -755,7 +473,7 @@ const toNutritionEntryResponse = (entry) => {
 
 const buildFavoriteEntryKey = (entry) => {
   if (Number.isFinite(Number(entry.fdcId)) && Number(entry.fdcId) > 0) {
-    return `fdc:${Number(entry.fdcId)}`;
+    return `${asString(entry.source).toLowerCase() || "unknown"}:fdc:${Number(entry.fdcId)}`;
   }
 
   return [
@@ -1020,9 +738,10 @@ const buildNutritionEntryPayload = (body, currentEntry = null) => {
   const mealType = normalizeMealType(body.mealType || currentEntry?.mealType || "breakfast");
   const brandName = getTrimmedString(body.brandName, body.brandOwner, currentEntry?.brandName);
   const fdcId = getNumericValue(body.fdcId, body.food?.fdcId, currentEntry?.fdcId) || null;
-  const source = getTrimmedString(body.source, currentEntry?.source, fdcId ? "usda" : "manual").toLowerCase();
+  const requestedSource = getTrimmedString(body.source, currentEntry?.source, fdcId ? "usda" : "manual").toLowerCase();
+  const source = fdcId && isFatSecretPublicFoodId(fdcId) ? "fatsecret" : requestedSource;
   if (!DIARY_SOURCE_SET.has(source)) {
-    throw new AppError("source must be one of: manual, usda.", httpStatus.BAD_REQUEST);
+    throw new AppError("source must be one of: manual, usda, fatsecret.", httpStatus.BAD_REQUEST);
   }
 
   const notes = getTrimmedString(body.notes, currentEntry?.notes);
@@ -1129,31 +848,25 @@ export const searchFoods = catchAsync(async (req, res) => {
 
   const page = parseNumber(req.query.page, "page", 1, false) ?? 1;
   const pageSize = parseNumber(req.query.pageSize || req.query.limit, "pageSize", 1, false) ?? 20;
-  const safePageSize = Math.min(Math.max(Math.floor(pageSize), 1), 50);
-
-  const url = buildUsdaSearchUrl({
+  const result = await fatsecretService.searchFoods({
     query,
-    pageNumber: Math.floor(page),
-    pageSize: safePageSize,
+    page: Math.floor(page),
+    pageSize: Math.min(Math.max(Math.floor(pageSize), 1), 50),
   });
-
-  const result = await usdaFetch(url);
-
-  const foods = Array.isArray(result.foods) ? result.foods.map(mapFoodSummary) : [];
 
   res.status(httpStatus.OK).json({
     success: true,
     data: {
-      totalHits: result.totalHits || 0,
-      currentPage: result.currentPage || Math.floor(page),
-      totalPages: result.totalPages || 0,
-      foods,
+      totalHits: result.totalHits,
+      currentPage: result.currentPage,
+      totalPages: result.totalPages,
+      foods: result.foods,
     },
   });
 });
 
 export const getFoodSuggestions = catchAsync(async (req, res) => {
-  const query = asString(req.query.query || req.query.q).toLowerCase();
+  const query = asString(req.query.query || req.query.q);
   if (!query || query.length < 2) {
     return res.status(httpStatus.OK).json({
       success: true,
@@ -1162,42 +875,10 @@ export const getFoodSuggestions = catchAsync(async (req, res) => {
   }
 
   const limit = parseNumber(req.query.limit, "limit", 1, false) ?? 10;
-  const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 20);
-  const pageSize = Math.min(Math.max(safeLimit * 5, 30), 100);
-
-  const url = buildUsdaSearchUrl({
+  const suggestions = await fatsecretService.getFoodSuggestions({
     query,
-    pageNumber: 1,
-    pageSize,
+    limit: Math.min(Math.max(Math.floor(limit), 1), 20),
   });
-
-  const result = await usdaFetch(url);
-  const foods = Array.isArray(result.foods) ? result.foods : [];
-
-  const unique = new Map();
-  for (const food of foods) {
-    const description = asString(food.description);
-    if (!description) continue;
-
-    const normalized = description.toLowerCase();
-    if (!normalized.includes(query)) continue;
-    if (!unique.has(normalized)) {
-      unique.set(normalized, {
-        label: description,
-        value: normalized,
-        fdcId: food.fdcId,
-      });
-    }
-  }
-
-  const suggestions = Array.from(unique.values())
-    .sort((a, b) => {
-      const aStarts = a.value.startsWith(query) ? 0 : 1;
-      const bStarts = b.value.startsWith(query) ? 0 : 1;
-      if (aStarts !== bStarts) return aStarts - bStarts;
-      return a.label.localeCompare(b.label);
-    })
-    .slice(0, safeLimit);
 
   res.status(httpStatus.OK).json({
     success: true,
@@ -1207,14 +888,10 @@ export const getFoodSuggestions = catchAsync(async (req, res) => {
 
 export const getFoodByFdcId = catchAsync(async (req, res) => {
   const fdcId = parseNumber(req.params.fdcId, "fdcId", 1, true);
-  const params = new URLSearchParams({ api_key: USDA_API_KEY });
-  const url = `${USDA_API_BASE}/food/${Math.floor(fdcId)}?${params.toString()}`;
-
-  const result = await usdaFetch(url);
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: mapFoodSummary(result),
+    data: await fatsecretService.getFoodByFdcId(Math.floor(fdcId)),
   });
 });
 

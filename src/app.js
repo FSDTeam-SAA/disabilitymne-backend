@@ -20,6 +20,7 @@ import exerciseRoutes from "./routes/exercise.routes.js";
 import recipeRoutes from "./routes/recipe.routes.js";
 import chatRoutes from "./routes/chat.routes.js";
 import nutritionRoutes from "./routes/nutrition.routes.js";
+import foodRoutes from "./routes/food.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 
 const app = express();
@@ -76,6 +77,7 @@ app.use("/api/v1/exercises", exerciseRoutes);
 app.use("/api/v1/recipes", recipeRoutes);
 app.use("/api/v1/chat", chatRoutes);
 app.use("/api/v1/nutrition", nutritionRoutes);
+app.use("/api/food", foodRoutes);
 app.use("/api/v1/admin", adminRoutes);
 
 /**

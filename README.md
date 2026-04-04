@@ -56,6 +56,20 @@ BACKEND_PUBLIC_URL=http://localhost:8000
 # PAYMENT_CANCEL_URL=https://api.example.com/api/v1/payments/checkout/cancel
 ```
 
+Configure FatSecret values in `.env` for nutrition food search:
+
+```env
+FATSECRET_CLIENT_ID=your_fatsecret_client_id
+FATSECRET_CLIENT_SECRET=your_fatsecret_client_secret
+FATSECRET_SCOPE=basic
+FATSECRET_TIMEOUT_MS=12000
+```
+
+Notes:
+- FatSecret OAuth 2.0 access tokens are requested server-side and cached automatically.
+- FatSecret requires your backend/server IP to be whitelisted in their dashboard before token requests will succeed.
+- `GET /api/v1/nutrition/foods/suggestions` will use FatSecret autocomplete when the account has access to it, and fall back to search-based suggestions otherwise.
+
 ## Upload Example
 
 `POST /api/v1/uploads/image` or `POST /api/v1/uploads/video` with form-data:
@@ -213,6 +227,7 @@ Flutter WebView flow (webhook-first, no custom success/cancel URL needed from ap
 - `GET /api/v1/nutrition/foods/suggestions?q=app&limit=10`
 - `GET /api/v1/nutrition/foods/search?query=apple&page=1&pageSize=20`
 - `GET /api/v1/nutrition/foods/:fdcId` (includes `portionOptions` + nutrient summary)
+- `GET /api/food/search?q=apple` (compatibility alias for food search)
 - `GET /api/v1/nutrition/diary?date=YYYY-MM-DD` (includes `energy`, `macroProgress`, `mealRecommendations`)
 - `GET /api/v1/nutrition/history?mealType=breakfast&limit=20&page=1`
 - `GET /api/v1/nutrition/favorites/sections?limit=20` (foods + meals + recipes buckets)
