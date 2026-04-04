@@ -2,6 +2,7 @@ import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
 import { uploadImageFields } from "../middlewares/upload.js";
 import {
+  createAdminUser,
   createAdminSubscriptionPlan,
   deleteAdminSubscriptionPlan,
   deleteAdminUser,
@@ -33,6 +34,7 @@ router.use(protect, restrictTo("admin"));
 router.get("/dashboard/overview", getDashboardOverview);
 
 router.get("/users", getAdminUsers);
+router.post("/users", createAdminUser);
 router.patch("/users/:userId/status", updateAdminUserStatus);
 router.delete("/users/:userId", deleteAdminUser);
 router.get("/support/tickets", getAdminSupportTickets);

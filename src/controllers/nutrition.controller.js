@@ -4,6 +4,7 @@ import { catchAsync } from "../utils/catchAsync.js";
 import { NutritionEntry } from "../models/nutritionEntry.model.js";
 import { Recipe } from "../models/recipe.model.js";
 import { WorkoutLog } from "../models/workoutLog.model.js";
+import { WeightLog } from "../models/weightLog.model.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { isFatSecretPublicFoodId, fatsecretService } from "../services/fatsecret.service.js";
 
@@ -11,6 +12,25 @@ const GOAL_KCAL_RANGE = {
   fat_loss: { min: 22, max: 26 },
   maintenance: { min: 28, max: 33 },
   muscle_gain: { min: 34, max: 40 },
+};
+
+const GOAL_BASELINE_KCAL_PER_KG = {
+  fat_loss: 22,
+  maintenance: 28,
+  muscle_gain: 34,
+};
+
+const ADAPTIVE_WINDOW_DAYS = 7;
+const ADAPTIVE_MIN_WEIGHT_LOGS_PER_WINDOW = 2;
+const ADAPTIVE_DEFAULT_STEP_KCAL = 150;
+const ADAPTIVE_ESCALATED_STEP_KCAL = 200;
+const ADAPTIVE_ESCALATION_THRESHOLD_PERCENT = 0.5;
+const ADAPTIVE_MIN_DAILY_CALORIES = 900;
+
+const ADAPTIVE_GOAL_BANDS = {
+  fat_loss: { min: -1.0, max: -0.5 },
+  maintenance: { min: -0.25, max: 0.25 },
+  muscle_gain: { min: 0.25, max: 0.5 },
 };
 
 const DEFAULT_MACRO_PER_KG = {
@@ -189,6 +209,7 @@ const calculateMacroAndCalorieTargets = ({
   carbsPerKg,
   fatPerKg,
   caloriesPerKg,
+  recommendedCaloriesValue,
 }) => {
   const proteinG = round(weightKg * proteinPerKg, 1);
   const carbsG = round(weightKg * carbsPerKg, 1);
@@ -202,10 +223,13 @@ const calculateMacroAndCalorieTargets = ({
   const goalRange = GOAL_KCAL_RANGE[goal];
   const minCalories = round(weightKg * goalRange.min, 0);
   const maxCalories = round(weightKg * goalRange.max, 0);
+  const baselineCaloriesPerKg = GOAL_BASELINE_KCAL_PER_KG[goal] || GOAL_BASELINE_KCAL_PER_KG.maintenance;
   const recommendedCalories =
     caloriesPerKg !== undefined
       ? round(weightKg * caloriesPerKg, 0)
-      : round(weightKg * ((goalRange.min + goalRange.max) / 2), 0);
+      : Number.isFinite(Number(recommendedCaloriesValue))
+      ? round(Number(recommendedCaloriesValue), 0)
+      : round(weightKg * baselineCaloriesPerKg, 0);
   const remainingCalories = round(recommendedCalories - macroCalories, 1);
 
   return {
@@ -234,17 +258,223 @@ const calculateMacroAndCalorieTargets = ({
   };
 };
 
-const resolveTargetSummaryFromSource = (source, user, { weightRequired = false } = {}) => {
+const resolveAdaptiveGoal = (source, user) => {
+  const goalInput = asString(source?.goal);
+  if (goalInput) {
+    return parseGoal(goalInput);
+  }
+
+  const savedGoal = asString(user?.adaptiveNutrition?.goal);
+  if (savedGoal) {
+    try {
+      return parseGoal(savedGoal);
+    } catch {
+      return "maintenance";
+    }
+  }
+
+  return "maintenance";
+};
+
+const calculateAverageWeightKg = (logs = []) => {
+  const valid = logs
+    .map((item) => Number(item?.weightKg))
+    .filter((weightKg) => Number.isFinite(weightKg) && weightKg > 0);
+
+  if (valid.length === 0) {
+    return null;
+  }
+
+  const total = valid.reduce((sum, weightKg) => sum + weightKg, 0);
+  return total / valid.length;
+};
+
+const isWithinGoalBand = (weeklyChangePercent, band) =>
+  weeklyChangePercent >= band.min && weeklyChangePercent <= band.max;
+
+const resolveAdaptiveCalorieDelta = (goal, weeklyChangePercent) => {
+  const band = ADAPTIVE_GOAL_BANDS[goal];
+  if (!band || !Number.isFinite(Number(weeklyChangePercent))) {
+    return 0;
+  }
+
+  if (isWithinGoalBand(weeklyChangePercent, band)) {
+    return 0;
+  }
+
+  const nearestBandEdge =
+    weeklyChangePercent < band.min ? band.min : band.max;
+  const deviationFromBand = Math.abs(weeklyChangePercent - nearestBandEdge);
+  const stepKcal =
+    deviationFromBand >= ADAPTIVE_ESCALATION_THRESHOLD_PERCENT
+      ? ADAPTIVE_ESCALATED_STEP_KCAL
+      : ADAPTIVE_DEFAULT_STEP_KCAL;
+
+  if (goal === "fat_loss") {
+    if (weeklyChangePercent > band.max) return -stepKcal;
+    if (weeklyChangePercent < band.min) return stepKcal;
+    return 0;
+  }
+
+  if (goal === "muscle_gain") {
+    if (weeklyChangePercent < band.min) return stepKcal;
+    if (weeklyChangePercent > band.max) return -stepKcal;
+    return 0;
+  }
+
+  if (weeklyChangePercent < band.min) return stepKcal;
+  if (weeklyChangePercent > band.max) return -stepKcal;
+  return 0;
+};
+
+const sevenDaysInMs = ADAPTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+const resolveAdaptiveRecommendedCalories = async ({ user, goal, weightKg }) => {
+  const now = new Date();
+  const baselineCalories = round(
+    weightKg * (GOAL_BASELINE_KCAL_PER_KG[goal] || GOAL_BASELINE_KCAL_PER_KG.maintenance),
+    0
+  );
+
+  const state = user?.adaptiveNutrition || {};
+  const previousGoal = asString(state.goal).toLowerCase() || "maintenance";
+
+  let currentDailyCalories = Number(state.currentDailyCalories || 0);
+  let startedAt = state.startedAt ? new Date(state.startedAt) : null;
+  let lastAdjustedAt = state.lastAdjustedAt ? new Date(state.lastAdjustedAt) : null;
+  let lastAdjustmentDeltaKcal = Number(state.lastAdjustmentDeltaKcal || 0);
+  let lastCurrentWeekAvgKg =
+    Number.isFinite(Number(state.lastCurrentWeekAvgKg)) &&
+    Number(state.lastCurrentWeekAvgKg) > 0
+      ? Number(state.lastCurrentWeekAvgKg)
+      : null;
+  let lastPreviousWeekAvgKg =
+    Number.isFinite(Number(state.lastPreviousWeekAvgKg)) &&
+    Number(state.lastPreviousWeekAvgKg) > 0
+      ? Number(state.lastPreviousWeekAvgKg)
+      : null;
+  let lastWeeklyChangePercent = Number.isFinite(Number(state.lastWeeklyChangePercent))
+    ? Number(state.lastWeeklyChangePercent)
+    : null;
+
+  let shouldSave = false;
+  let goalReinitialized = false;
+
+  if (previousGoal !== goal) {
+    currentDailyCalories = baselineCalories;
+    startedAt = now;
+    lastAdjustedAt = now;
+    lastAdjustmentDeltaKcal = 0;
+    lastCurrentWeekAvgKg = null;
+    lastPreviousWeekAvgKg = null;
+    lastWeeklyChangePercent = null;
+    shouldSave = true;
+    goalReinitialized = true;
+  }
+
+  if (!Number.isFinite(currentDailyCalories) || currentDailyCalories <= 0) {
+    currentDailyCalories = baselineCalories;
+    startedAt = startedAt || now;
+    lastAdjustmentDeltaKcal = 0;
+    shouldSave = true;
+  }
+
+  if (!goalReinitialized && (!lastAdjustedAt || now.getTime() - lastAdjustedAt.getTime() >= sevenDaysInMs)) {
+    const currentWindowStart = new Date(now.getTime() - sevenDaysInMs);
+    const previousWindowStart = new Date(now.getTime() - sevenDaysInMs * 2);
+
+    const [currentWeekLogs, previousWeekLogs] = await Promise.all([
+      WeightLog.find({
+        user: user._id,
+        recordedAt: { $gte: currentWindowStart, $lte: now },
+      })
+        .select("weightKg recordedAt")
+        .lean(),
+      WeightLog.find({
+        user: user._id,
+        recordedAt: { $gte: previousWindowStart, $lt: currentWindowStart },
+      })
+        .select("weightKg recordedAt")
+        .lean(),
+    ]);
+
+    if (
+      currentWeekLogs.length >= ADAPTIVE_MIN_WEIGHT_LOGS_PER_WINDOW &&
+      previousWeekLogs.length >= ADAPTIVE_MIN_WEIGHT_LOGS_PER_WINDOW
+    ) {
+      const currentWeekAvg = calculateAverageWeightKg(currentWeekLogs);
+      const previousWeekAvg = calculateAverageWeightKg(previousWeekLogs);
+
+      if (currentWeekAvg && previousWeekAvg && previousWeekAvg > 0) {
+        const weeklyChangePercent = ((currentWeekAvg - previousWeekAvg) / previousWeekAvg) * 100;
+        const adjustmentDelta = resolveAdaptiveCalorieDelta(goal, weeklyChangePercent);
+
+        currentDailyCalories = Math.max(
+          ADAPTIVE_MIN_DAILY_CALORIES,
+          round(currentDailyCalories + adjustmentDelta, 0)
+        );
+        lastAdjustmentDeltaKcal = adjustmentDelta;
+        lastCurrentWeekAvgKg = round(currentWeekAvg, 2);
+        lastPreviousWeekAvgKg = round(previousWeekAvg, 2);
+        lastWeeklyChangePercent = round(weeklyChangePercent, 2);
+      } else {
+        lastAdjustmentDeltaKcal = 0;
+        lastCurrentWeekAvgKg = null;
+        lastPreviousWeekAvgKg = null;
+        lastWeeklyChangePercent = null;
+      }
+    } else {
+      lastAdjustmentDeltaKcal = 0;
+      lastCurrentWeekAvgKg = null;
+      lastPreviousWeekAvgKg = null;
+      lastWeeklyChangePercent = null;
+    }
+
+    lastAdjustedAt = now;
+    shouldSave = true;
+  } else if (!lastAdjustedAt) {
+    lastAdjustedAt = now;
+    shouldSave = true;
+  }
+
+  if (shouldSave) {
+    user.adaptiveNutrition = {
+      ...(user.adaptiveNutrition || {}),
+      goal,
+      currentDailyCalories,
+      startedAt,
+      lastAdjustedAt,
+      lastAdjustmentDeltaKcal,
+      lastCurrentWeekAvgKg,
+      lastPreviousWeekAvgKg,
+      lastWeeklyChangePercent,
+    };
+    await user.save({ validateBeforeSave: false });
+  }
+
+  return currentDailyCalories;
+};
+
+const resolveTargetSummaryFromSource = async (source, user, { weightRequired = false } = {}) => {
   const weightKg = resolveWeightKgFromSource(source, user, weightRequired);
   if (!weightKg) {
     return null;
   }
 
-  const goal = parseGoal(source.goal);
+  const goal = resolveAdaptiveGoal(source, user);
   const proteinPerKg = parseNumber(source.proteinPerKg, "proteinPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.protein;
   const carbsPerKg = parseNumber(source.carbsPerKg, "carbsPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.carbs;
   const fatPerKg = parseNumber(source.fatPerKg, "fatPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.fat;
   const caloriesPerKg = parseNumber(source.caloriesPerKg, "caloriesPerKg", 1, false);
+
+  const adaptiveRecommendedCalories =
+    caloriesPerKg === undefined && user
+      ? await resolveAdaptiveRecommendedCalories({
+          user,
+          goal,
+          weightKg,
+        })
+      : null;
 
   return calculateMacroAndCalorieTargets({
     weightKg,
@@ -253,6 +483,7 @@ const resolveTargetSummaryFromSource = (source, user, { weightRequired = false }
     carbsPerKg,
     fatPerKg,
     caloriesPerKg,
+    recommendedCaloriesValue: adaptiveRecommendedCalories,
   });
 };
 
@@ -827,7 +1058,7 @@ const buildNutritionDiaryResponse = (date, entries, options = {}) => {
 };
 
 export const calculateMacroTargets = catchAsync(async (req, res) => {
-  const summary = resolveTargetSummaryFromSource(req.body, req.user, { weightRequired: true });
+  const summary = await resolveTargetSummaryFromSource(req.body, req.user, { weightRequired: true });
 
   res.status(httpStatus.OK).json({
     success: true,
@@ -904,7 +1135,7 @@ export const getNutritionDiary = catchAsync(async (req, res) => {
     }).sort({ mealType: 1, createdAt: 1 }),
     getBurnedCaloriesForDate(req.user._id, entryDate),
   ]);
-  const targets = resolveTargetSummaryFromSource(req.query, req.user, { weightRequired: false });
+  const targets = await resolveTargetSummaryFromSource(req.query, req.user, { weightRequired: false });
 
   res.status(httpStatus.OK).json({
     success: true,
