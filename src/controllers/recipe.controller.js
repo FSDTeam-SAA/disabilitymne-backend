@@ -157,6 +157,31 @@ const parseBoolean = (value, fieldName) => {
   throw new AppError(`${fieldName} must be a boolean.`, httpStatus.BAD_REQUEST);
 };
 
+const normalizeNumericInput = (value, fieldName) => {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  const normalized = asString(value).replace(/\s+/g, "");
+  if (!normalized) {
+    return normalized;
+  }
+
+  if (normalized.includes(",") && normalized.includes(".")) {
+    throw new AppError(
+      `${fieldName} must use either "," or "." as the decimal separator, not both.`,
+      httpStatus.BAD_REQUEST
+    );
+  }
+
+  const decimalNormalized = normalized.replace(",", ".");
+  if (!/^-?\d+(\.\d+)?$/.test(decimalNormalized)) {
+    throw new AppError(`${fieldName} must be numeric.`, httpStatus.BAD_REQUEST);
+  }
+
+  return decimalNormalized;
+};
+
 const parseNumber = (value, fieldName, min = 0, required = false) => {
   if (value === undefined || value === null || value === "") {
     if (required) {
@@ -165,14 +190,7 @@ const parseNumber = (value, fieldName, min = 0, required = false) => {
     return undefined;
   }
 
-  let numeric = value;
-  if (typeof value === "string") {
-    const matched = value.match(/-?\d+(\.\d+)?/);
-    if (!matched) {
-      throw new AppError(`${fieldName} must be numeric.`, httpStatus.BAD_REQUEST);
-    }
-    numeric = matched[0];
-  }
+  const numeric = normalizeNumericInput(value, fieldName);
 
   const parsed = Number(numeric);
   if (!Number.isFinite(parsed) || parsed < min) {
