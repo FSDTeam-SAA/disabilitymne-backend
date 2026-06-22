@@ -1253,8 +1253,8 @@ export const getAdminExercises = catchAsync(async (req, res) => {
     filter.$or = [
       { exerciseName: pattern },
       { description: pattern },
-      { keyBenefits: { $elemMatch: pattern } },
-      { muscleGroups: { $elemMatch: pattern } },
+      { keyBenefits: pattern },
+      { muscleGroups: pattern },
     ];
   }
 
@@ -1456,8 +1456,8 @@ export const getPublicExerciseLibrary = catchAsync(async (req, res) => {
     filter.$or = [
       { exerciseName: pattern },
       { description: pattern },
-      { keyBenefits: { $elemMatch: pattern } },
-      { muscleGroups: { $elemMatch: pattern } },
+      { keyBenefits: pattern },
+      { muscleGroups: pattern },
     ];
   }
 
@@ -1494,8 +1494,8 @@ export const getMyPrivateExercises = catchAsync(async (req, res) => {
     filter.$or = [
       { exerciseName: pattern },
       { description: pattern },
-      { keyBenefits: { $elemMatch: pattern } },
-      { muscleGroups: { $elemMatch: pattern } },
+      { keyBenefits: pattern },
+      { muscleGroups: pattern },
     ];
   }
 
@@ -1525,8 +1525,8 @@ export const getAllAccessibleExercises = catchAsync(async (req, res) => {
         $or: [
           { exerciseName: pattern },
           { description: pattern },
-          { keyBenefits: { $elemMatch: pattern } },
-          { muscleGroups: { $elemMatch: pattern } },
+          { keyBenefits: pattern },
+          { muscleGroups: pattern },
         ],
       },
     ];
