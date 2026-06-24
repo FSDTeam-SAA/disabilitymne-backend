@@ -1,9 +1,11 @@
 import mongoose from "mongoose";
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import { uploadMediaFileToR2 } from "../services/r2.service.js";
 import { emitChatMessageEvent, emitChatThreadReadEvent, emitChatThreadUpdatedEvent } from "../socket/chatSocket.js";
 import { ChatMessage } from "../models/chatMessage.model.js";
 import { ChatThread } from "../models/chatThread.model.js";
@@ -11,6 +13,7 @@ import { User } from "../models/user.model.js";
 import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
 
 const CHAT_ATTACHMENT_FIELDS = ["attachments", "attachment", "files", "file"];
+const CHAT_ATTACHMENT_FOLDER = "chat/attachments";
 const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 
 const asString = (value) => {
@@ -125,10 +128,80 @@ const normalizeAttachmentList = (rawValue) => {
   return single ? [single] : [];
 };
 
-const getChatBodyFromRequest = (req) =>
-  mergeUploadedMediaIntoBody(req.body, req.files, [
+const normalizeUploadedFiles = (files) => {
+  if (!files) return {};
+
+  if (Array.isArray(files)) {
+    return files.reduce((acc, file) => {
+      const fieldName = asString(file?.fieldname);
+      if (!fieldName) return acc;
+
+      if (!acc[fieldName]) {
+        acc[fieldName] = [];
+      }
+
+      acc[fieldName].push(file);
+      return acc;
+    }, {});
+  }
+
+  return files;
+};
+
+const getUploadedFilesByFieldNames = (files, fieldNames = []) => {
+  const groupedFiles = normalizeUploadedFiles(files);
+  const uploadedFiles = [];
+
+  for (const fieldName of fieldNames) {
+    const fieldFiles = groupedFiles[fieldName];
+    if (Array.isArray(fieldFiles) && fieldFiles.length > 0) {
+      uploadedFiles.push(...fieldFiles);
+    }
+  }
+
+  return uploadedFiles;
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
+};
+
+const uploadAttachmentFilesToR2 = async (files) => {
+  if (!Array.isArray(files) || files.length === 0) {
+    return [];
+  }
+
+  try {
+    return await Promise.all(files.map((file) => uploadMediaFileToR2(file, { folder: CHAT_ATTACHMENT_FOLDER })));
+  } catch (error) {
+    throw new AppError(asString(error?.message) || "Failed to upload attachment to storage.", httpStatus.INTERNAL_SERVER_ERROR);
+  } finally {
+    await Promise.all(files.map((file) => cleanupTemporaryUpload(file)));
+  }
+};
+
+const getChatBodyFromRequest = async (req) => {
+  let payload = mergeUploadedMediaIntoBody(req.body, req.files, [
     { target: "attachments", fieldNames: CHAT_ATTACHMENT_FIELDS },
   ]);
+
+  const attachmentFiles = getUploadedFilesByFieldNames(req.files, CHAT_ATTACHMENT_FIELDS);
+  if (attachmentFiles.length > 0) {
+    payload = {
+      ...(payload || {}),
+      attachments: await uploadAttachmentFilesToR2(attachmentFiles),
+    };
+  }
+
+  return payload;
+};
 
 const requirePremiumAccessForUser = (user) => {
   if (user.role === "admin") return;
@@ -404,7 +477,7 @@ export const sendChatMessage = catchAsync(async (req, res) => {
   requirePremiumAccessForUser(req.user);
 
   const thread = await getAccessibleThread(req.params.threadId, req.user);
-  const payload = getChatBodyFromRequest(req);
+  const payload = await getChatBodyFromRequest(req);
   const messageText = asString(payload.message || payload.text);
   const attachments = normalizeAttachmentList(payload.attachments);
 

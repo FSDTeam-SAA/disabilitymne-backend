@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
@@ -18,6 +19,7 @@ import {
 } from "../constants/subscriptionPlans.js";
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import { uploadImageFileToR2 } from "../services/r2.service.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
 const USER_ROLES = new Set(["user", "admin"]);
@@ -402,11 +404,66 @@ const toAdminWorkoutProgressLogRow = (log) => ({
   createdAt: log.createdAt,
 });
 
-const getAdminProfileBodyFromRequest = (req) => {
+const normalizeUploadedFiles = (files) => {
+  if (!files) return {};
+
+  if (Array.isArray(files)) {
+    return files.reduce((acc, file) => {
+      const fieldName = asString(file?.fieldname);
+      if (!fieldName) return acc;
+
+      if (!acc[fieldName]) {
+        acc[fieldName] = [];
+      }
+
+      acc[fieldName].push(file);
+      return acc;
+    }, {});
+  }
+
+  return files;
+};
+
+const getFirstUploadedProfileFile = (files) => {
+  const groupedFiles = normalizeUploadedFiles(files);
+
+  for (const fieldName of PROFILE_IMAGE_FIELDS) {
+    const fieldFiles = groupedFiles[fieldName];
+    if (Array.isArray(fieldFiles) && fieldFiles.length > 0) {
+      return fieldFiles[0];
+    }
+  }
+
+  return null;
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
+};
+
+const getAdminProfileBodyFromRequest = async (req) => {
   const payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
 
   if (Array.isArray(payload.profileImage)) {
     payload.profileImage = payload.profileImage[0] || null;
+  }
+
+  const uploadedFile = getFirstUploadedProfileFile(req.files);
+  if (uploadedFile) {
+    try {
+      payload.profileImage = await uploadImageFileToR2(uploadedFile, { folder: "users/profile-images" });
+    } catch (error) {
+      throw new AppError(asString(error?.message) || "Failed to upload profile image to storage.", httpStatus.INTERNAL_SERVER_ERROR);
+    } finally {
+      await cleanupTemporaryUpload(uploadedFile);
+    }
   }
 
   return payload;
@@ -1110,7 +1167,7 @@ export const updateAdminSettingsProfile = catchAsync(async (req, res) => {
     throw new AppError("Admin not found.", httpStatus.NOT_FOUND);
   }
 
-  const payload = getAdminProfileBodyFromRequest(req);
+  const payload = await getAdminProfileBodyFromRequest(req);
 
   const emailInput = asString(payload.email).toLowerCase();
   if (emailInput && emailInput !== admin.email) {
