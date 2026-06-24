@@ -20,6 +20,7 @@ import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
+const USER_ROLES = new Set(["user", "admin"]);
 const SUPPORT_TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
 const WORKOUT_EXPERIENCE_LEVELS = new Set(["easy", "intermediate", "very_hard"]);
 const PROFILE_IMAGE_FIELDS = ["profileImage", "avatar", "image"];
@@ -186,6 +187,15 @@ const normalizeAccountStatus = (value) => {
   return status;
 };
 
+const normalizeRole = (value) => {
+  const role = asString(value).toLowerCase();
+  if (!USER_ROLES.has(role)) {
+    throw new AppError("role must be one of: user, admin.", httpStatus.BAD_REQUEST);
+  }
+
+  return role;
+};
+
 const normalizeProfileImage = (value) => {
   if (value === null || value === "") {
     return null;
@@ -258,6 +268,7 @@ const toUserRow = (user) => ({
   isActive: Boolean(user.isActive),
   isSponsored: Boolean(user.isSponsored),
   sponsorshipNote: asString(user?.sponsorship?.note) || "",
+  role: user.role || "user",
 });
 
 const toPlanResponse = (plan) => ({
@@ -486,7 +497,7 @@ export const getDashboardOverview = catchAsync(async (req, res) => {
     User.find({ role: "user" })
       .sort({ createdAt: -1 })
       .limit(8)
-      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive isSponsored sponsorship"),
+      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive isSponsored sponsorship role"),
   ]);
 
   const totalRevenue = revenueAgg[0]?.total || 0;
@@ -558,7 +569,7 @@ export const getAdminUsers = catchAsync(async (req, res) => {
   const limit = parseLimit(req.query.limit, 20, 100);
   const skip = (page - 1) * limit;
 
-  const filter = { role: "user" };
+  const filter = {};
 
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
@@ -602,7 +613,7 @@ export const getAdminUsers = catchAsync(async (req, res) => {
       .sort({ [sortField]: sortOrder, createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive isSponsored sponsorship"),
+      .select("firstName lastName email phone createdAt selectedPlan mobilityType accountStatus isActive isSponsored sponsorship role"),
     User.countDocuments(filter),
   ]);
 
@@ -1030,6 +1041,35 @@ export const updateAdminUserStatus = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     message: "User status updated successfully.",
+    data: toUserRow(user),
+  });
+});
+
+export const updateAdminUserRole = catchAsync(async (req, res) => {
+  const { userId } = req.params;
+
+  if (!mongoose.isValidObjectId(userId)) {
+    throw new AppError("Invalid user id.", httpStatus.BAD_REQUEST);
+  }
+
+  if (userId === req.user._id.toString()) {
+    throw new AppError("You cannot change your own role.", httpStatus.BAD_REQUEST);
+  }
+
+  const role = normalizeRole(req.body.role);
+
+  const user = await User.findById(userId).select("+refreshTokenHash +refreshTokenExpiresAt");
+  if (!user) {
+    throw new AppError("User not found.", httpStatus.NOT_FOUND);
+  }
+
+  user.role = role;
+  user.clearRefreshToken();
+  await user.save({ validateBeforeSave: false });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "User role updated successfully.",
     data: toUserRow(user),
   });
 });
