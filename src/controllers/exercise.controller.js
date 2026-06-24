@@ -1223,7 +1223,7 @@ export const createExercise = catchAsync(async (req, res) => {
 
 export const getAdminExercises = catchAsync(async (req, res) => {
   const page = parsePage(req.query.page);
-  const limit = parseLimit(req.query.limit, 20, 100);
+  const limit = parseLimit(req.query.limit, 20, 2000);
   const skip = (page - 1) * limit;
 
   const filter = {};

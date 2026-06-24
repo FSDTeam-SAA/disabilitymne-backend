@@ -441,7 +441,6 @@ const parseExerciseIds = (rawValue) => {
     candidates = [value];
   }
 
-  const unique = new Set();
   const ids = [];
 
   for (const item of candidates) {
@@ -458,10 +457,7 @@ const parseExerciseIds = (rawValue) => {
       throw new AppError(`Invalid exercise id: ${id}`, httpStatus.BAD_REQUEST);
     }
 
-    if (!unique.has(id)) {
-      unique.add(id);
-      ids.push(id);
-    }
+    ids.push(id);
   }
 
   return ids;
