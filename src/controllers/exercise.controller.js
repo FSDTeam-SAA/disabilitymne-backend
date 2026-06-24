@@ -6,11 +6,8 @@ import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
-import {
-  deleteCloudinaryMediaByPublicId,
-  uploadMediaFileToCloudinary,
-  uploadMediaUrlToCloudinary,
-} from "../services/cloudinary.service.js";
+import { deleteCloudinaryMediaByPublicId } from "../services/cloudinary.service.js";
+import { deleteR2ObjectByKey, isR2Url, uploadMediaFileToR2, uploadMediaUrlToR2 } from "../services/r2.service.js";
 import { Exercise } from "../models/exercise.model.js";
 import { Program } from "../models/program.model.js";
 import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
@@ -21,9 +18,9 @@ const EXERCISE_STATUSES = new Set(["draft", "published", "archived"]);
 const EXERCISE_IMAGE_FIELDS = ["exerciseImages", "exerciseImage", "image"];
 const TARGET_MUSCLE_IMAGE_FIELDS = ["targetMuscleImages", "targetMuscleImage", "muscleImages", "muscleImage"];
 const DEMO_VIDEO_FIELDS = ["demoVideos", "demoVideo", "exerciseVideo", "exerciseVideos", "video"];
-const CLOUDINARY_EXERCISE_IMAGE_FOLDER = "exercises/images";
-const CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER = "exercises/target-muscles";
-const CLOUDINARY_DEMO_VIDEO_FOLDER = "exercises/videos";
+const EXERCISE_IMAGE_FOLDER = "exercises/images";
+const TARGET_MUSCLE_IMAGE_FOLDER = "exercises/target-muscles";
+const DEMO_VIDEO_FOLDER = "exercises/videos";
 const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 
 const parseMaybeJson = (value) => {
@@ -110,19 +107,19 @@ const cleanupTemporaryUploads = async (files = []) => {
   await Promise.all(files.map((file) => cleanupTemporaryUpload(file)));
 };
 
-const uploadMediaFilesToCloudinary = async (files, options = {}) => {
+const uploadMediaFilesToR2 = async (files, options = {}) => {
   if (!Array.isArray(files) || files.length === 0) {
     return [];
   }
 
   const folder = asString(options.folder);
   const resourceType = asString(options.resourceType);
-  const failureMessage = asString(options.failureMessage) || "Failed to upload media to Cloudinary.";
+  const failureMessage = asString(options.failureMessage) || "Failed to upload media to storage.";
 
   try {
     return await Promise.all(
       files.map((file) =>
-        uploadMediaFileToCloudinary(file, {
+        uploadMediaFileToR2(file, {
           folder,
           resourceType,
         })
@@ -489,28 +486,38 @@ const extractCloudinaryMediaInfoFromUrl = (url) => {
   }
 };
 
-const getMediaAssetCloudinaryInfo = (asset) => {
+const getMediaAssetStorageInfo = (asset) => {
   const url = asString(asset?.url);
   const mimetype = asString(asset?.mimetype).toLowerCase();
+  const storedId = asString(asset?.publicId);
+
+  const inferredResourceType = mimetype.startsWith("video/") ? "video" : mimetype.startsWith("image/") ? "image" : "";
+
+  if (isR2Url(url)) {
+    return {
+      provider: "r2",
+      key: storedId,
+      resourceType: inferredResourceType || (url.includes("/videos/") ? "video" : "image") || "image",
+    };
+  }
 
   const parsedFromUrl = extractCloudinaryMediaInfoFromUrl(url);
-  const inferredResourceType =
-    mimetype.startsWith("video/")
-      ? "video"
-      : mimetype.startsWith("image/")
-        ? "image"
-        : parsedFromUrl.resourceType;
+  const cloudinaryId = storedId || parsedFromUrl.publicId;
+  if (cloudinaryId) {
+    return {
+      provider: "cloudinary",
+      key: cloudinaryId,
+      resourceType: inferredResourceType || parsedFromUrl.resourceType,
+    };
+  }
 
-  return {
-    publicId: asString(asset?.publicId) || parsedFromUrl.publicId,
-    resourceType: inferredResourceType === "video" ? "video" : "image",
-  };
+  return { provider: "none", key: "", resourceType: inferredResourceType || "image" };
 };
 
 const buildMediaAssetComparisonKey = (asset) => {
-  const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
-  if (cloudinaryInfo.publicId) {
-    return `public:${cloudinaryInfo.resourceType}:${cloudinaryInfo.publicId}`;
+  const storageInfo = getMediaAssetStorageInfo(asset);
+  if (storageInfo.key) {
+    return `${storageInfo.provider}:${storageInfo.resourceType}:${storageInfo.key}`;
   }
 
   const url = asString(asset?.url);
@@ -556,7 +563,7 @@ const preserveExistingMediaMetadata = (nextAssets, existingAssets) => {
   });
 };
 
-const resolveRemovedCloudinaryAssets = (previousAssets, nextAssets) => {
+const resolveRemovedMediaAssets = (previousAssets, nextAssets) => {
   const previous = normalizeMediaList(previousAssets);
   const next = normalizeMediaList(nextAssets);
   const nextKeys = new Set(next.map((asset) => buildMediaAssetComparisonKey(asset)).filter(Boolean));
@@ -568,29 +575,30 @@ const resolveRemovedCloudinaryAssets = (previousAssets, nextAssets) => {
       continue;
     }
 
-    const cloudinaryInfo = getMediaAssetCloudinaryInfo(previousAsset);
-    if (cloudinaryInfo.publicId) {
-      removedAssets.push(cloudinaryInfo);
+    const storageInfo = getMediaAssetStorageInfo(previousAsset);
+    if (storageInfo.key) {
+      removedAssets.push(storageInfo);
     }
   }
 
   return removedAssets;
 };
 
-const deleteCloudinaryAssets = async (assets = []) => {
+const deleteMediaAssets = async (assets = []) => {
   const uniqueAssets = [];
   const seen = new Set();
 
   for (const asset of assets) {
-    const publicId = asString(asset?.publicId);
+    const key = asString(asset?.key);
+    const provider = asset?.provider === "r2" ? "r2" : "cloudinary";
     const resourceType = asString(asset?.resourceType).toLowerCase() === "video" ? "video" : "image";
-    if (!publicId) continue;
+    if (!key) continue;
 
-    const key = `${resourceType}:${publicId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const dedupeKey = `${provider}:${resourceType}:${key}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
 
-    uniqueAssets.push({ publicId, resourceType });
+    uniqueAssets.push({ provider, key, resourceType });
   }
 
   if (uniqueAssets.length === 0) {
@@ -599,16 +607,16 @@ const deleteCloudinaryAssets = async (assets = []) => {
 
   await Promise.allSettled(
     uniqueAssets.map((asset) =>
-      deleteCloudinaryMediaByPublicId(asset.publicId, {
-        resourceType: asset.resourceType,
-      })
+      asset.provider === "r2"
+        ? deleteR2ObjectByKey(asset.key)
+        : deleteCloudinaryMediaByPublicId(asset.key, { resourceType: asset.resourceType })
     )
   );
 };
 
 const isAbsoluteHttpUrl = (value) => /^https?:\/\//i.test(asString(value));
 
-const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) => {
+const convertMediaAssetsToR2IfNeeded = async (rawValue, options = {}) => {
   const assets = normalizeMediaList(rawValue);
   if (assets.length === 0) {
     return assets;
@@ -616,13 +624,13 @@ const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) =>
 
   const folder = asString(options.folder);
   const resourceType = asString(options.resourceType).toLowerCase() === "video" ? "video" : "image";
-  const failureMessage = asString(options.failureMessage) || "Failed to upload media URL to Cloudinary.";
+  const failureMessage = asString(options.failureMessage) || "Failed to upload media URL to storage.";
 
   try {
     const converted = await Promise.all(
       assets.map(async (asset) => {
-        const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
-        if (cloudinaryInfo.publicId || /res\.cloudinary\.com/i.test(asString(asset?.url))) {
+        const storageInfo = getMediaAssetStorageInfo(asset);
+        if (storageInfo.key) {
           return asset;
         }
 
@@ -631,7 +639,7 @@ const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) =>
           return asset;
         }
 
-        return uploadMediaUrlToCloudinary(sourceUrl, {
+        return uploadMediaUrlToR2(sourceUrl, {
           folder,
           resourceType,
         });
@@ -1137,10 +1145,10 @@ const getExerciseBodyFromRequest = async (req) => {
   if (exerciseImageFiles.length > 0) {
     payload = {
       ...(payload || {}),
-      exerciseImages: await uploadMediaFilesToCloudinary(exerciseImageFiles, {
-        folder: CLOUDINARY_EXERCISE_IMAGE_FOLDER,
+      exerciseImages: await uploadMediaFilesToR2(exerciseImageFiles, {
+        folder: EXERCISE_IMAGE_FOLDER,
         resourceType: "image",
-        failureMessage: "Failed to upload exercise images to Cloudinary.",
+        failureMessage: "Failed to upload exercise images to storage.",
       }),
     };
   }
@@ -1148,10 +1156,10 @@ const getExerciseBodyFromRequest = async (req) => {
   if (targetMuscleImageFiles.length > 0) {
     payload = {
       ...(payload || {}),
-      targetMuscleImages: await uploadMediaFilesToCloudinary(targetMuscleImageFiles, {
-        folder: CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER,
+      targetMuscleImages: await uploadMediaFilesToR2(targetMuscleImageFiles, {
+        folder: TARGET_MUSCLE_IMAGE_FOLDER,
         resourceType: "image",
-        failureMessage: "Failed to upload target muscle images to Cloudinary.",
+        failureMessage: "Failed to upload target muscle images to storage.",
       }),
     };
   }
@@ -1159,10 +1167,10 @@ const getExerciseBodyFromRequest = async (req) => {
   if (demoVideoFiles.length > 0) {
     payload = {
       ...(payload || {}),
-      demoVideos: await uploadMediaFilesToCloudinary(demoVideoFiles, {
-        folder: CLOUDINARY_DEMO_VIDEO_FOLDER,
+      demoVideos: await uploadMediaFilesToR2(demoVideoFiles, {
+        folder: DEMO_VIDEO_FOLDER,
         resourceType: "video",
-        failureMessage: "Failed to upload demo videos to Cloudinary.",
+        failureMessage: "Failed to upload demo videos to storage.",
       }),
     };
   }
@@ -1170,10 +1178,10 @@ const getExerciseBodyFromRequest = async (req) => {
   if (Object.hasOwn(payload, "exerciseImages")) {
     payload = {
       ...(payload || {}),
-      exerciseImages: await convertMediaAssetsToCloudinaryIfNeeded(payload.exerciseImages, {
-        folder: CLOUDINARY_EXERCISE_IMAGE_FOLDER,
+      exerciseImages: await convertMediaAssetsToR2IfNeeded(payload.exerciseImages, {
+        folder: EXERCISE_IMAGE_FOLDER,
         resourceType: "image",
-        failureMessage: "Failed to migrate exercise images to Cloudinary.",
+        failureMessage: "Failed to migrate exercise images to storage.",
       }),
     };
   }
@@ -1181,10 +1189,10 @@ const getExerciseBodyFromRequest = async (req) => {
   if (Object.hasOwn(payload, "targetMuscleImages")) {
     payload = {
       ...(payload || {}),
-      targetMuscleImages: await convertMediaAssetsToCloudinaryIfNeeded(payload.targetMuscleImages, {
-        folder: CLOUDINARY_TARGET_MUSCLE_IMAGE_FOLDER,
+      targetMuscleImages: await convertMediaAssetsToR2IfNeeded(payload.targetMuscleImages, {
+        folder: TARGET_MUSCLE_IMAGE_FOLDER,
         resourceType: "image",
-        failureMessage: "Failed to migrate target muscle images to Cloudinary.",
+        failureMessage: "Failed to migrate target muscle images to storage.",
       }),
     };
   }
@@ -1192,10 +1200,10 @@ const getExerciseBodyFromRequest = async (req) => {
   if (Object.hasOwn(payload, "demoVideos")) {
     payload = {
       ...(payload || {}),
-      demoVideos: await convertMediaAssetsToCloudinaryIfNeeded(payload.demoVideos, {
-        folder: CLOUDINARY_DEMO_VIDEO_FOLDER,
+      demoVideos: await convertMediaAssetsToR2IfNeeded(payload.demoVideos, {
+        folder: DEMO_VIDEO_FOLDER,
         resourceType: "video",
-        failureMessage: "Failed to migrate demo videos to Cloudinary.",
+        failureMessage: "Failed to migrate demo videos to storage.",
       }),
     };
   }
@@ -1314,12 +1322,12 @@ export const updateAdminExercise = catchAsync(async (req, res) => {
   Object.assign(exercise, updates, { updatedBy: req.user._id });
   await exercise.save();
 
-  const removedCloudinaryAssets = [
-    ...resolveRemovedCloudinaryAssets(previousExerciseImages, exercise.exerciseImages),
-    ...resolveRemovedCloudinaryAssets(previousTargetMuscleImages, exercise.targetMuscleImages),
-    ...resolveRemovedCloudinaryAssets(previousDemoVideos, exercise.demoVideos),
+  const removedMediaAssets = [
+    ...resolveRemovedMediaAssets(previousExerciseImages, exercise.exerciseImages),
+    ...resolveRemovedMediaAssets(previousTargetMuscleImages, exercise.targetMuscleImages),
+    ...resolveRemovedMediaAssets(previousDemoVideos, exercise.demoVideos),
   ];
-  await deleteCloudinaryAssets(removedCloudinaryAssets);
+  await deleteMediaAssets(removedMediaAssets);
 
   const populated = await Exercise.findById(exercise._id).populate("assignedUser", "firstName email");
   const usageMap = await getProgramUsageMap([exercise._id]);
@@ -1378,12 +1386,10 @@ export const deleteAdminExercise = catchAsync(async (req, res) => {
     ...normalizeMediaList(exercise.targetMuscleImages),
     ...normalizeMediaList(exercise.demoVideos),
   ];
-  const cloudinaryAssets = exerciseAssets
-    .map((asset) => getMediaAssetCloudinaryInfo(asset))
-    .filter((asset) => asString(asset.publicId));
+  const mediaAssetsToDelete = exerciseAssets.map((asset) => getMediaAssetStorageInfo(asset)).filter((asset) => asset.key);
 
   await Exercise.deleteOne({ _id: exercise._id });
-  await deleteCloudinaryAssets(cloudinaryAssets);
+  await deleteMediaAssets(mediaAssetsToDelete);
   await UserExerciseSetting.deleteMany({ exercise: exercise._id });
 
   const affectedPrograms = await Program.find({ exerciseRefs: exercise._id });

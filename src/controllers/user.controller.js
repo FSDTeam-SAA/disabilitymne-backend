@@ -4,7 +4,7 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { getPlanByKey } from "../services/subscriptionPlan.service.js";
-import { uploadImageFileToCloudinary } from "../services/cloudinary.service.js";
+import { uploadImageFileToR2 } from "../services/r2.service.js";
 import { WeightLog } from "../models/weightLog.model.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 
@@ -198,23 +198,23 @@ const cleanupTemporaryUpload = async (file) => {
   }
 };
 
-const applyCloudinaryProfileImage = async (req, payload) => {
+const applyProfileImageUpload = async (req, payload) => {
   const uploadedFile = getFirstUploadedProfileFile(req.files);
   if (!uploadedFile) {
     return payload;
   }
 
   try {
-    const cloudinaryAsset = await uploadImageFileToCloudinary(uploadedFile, {
+    const uploadedAsset = await uploadImageFileToR2(uploadedFile, {
       folder: "users/profile-images",
     });
 
     return {
       ...(payload || {}),
-      profileImage: cloudinaryAsset,
+      profileImage: uploadedAsset,
     };
   } catch (error) {
-    throw new AppError(asString(error?.message) || "Failed to upload profile image to Cloudinary.", httpStatus.INTERNAL_SERVER_ERROR);
+    throw new AppError(asString(error?.message) || "Failed to upload profile image to storage.", httpStatus.INTERNAL_SERVER_ERROR);
   } finally {
     await cleanupTemporaryUpload(uploadedFile);
   }
@@ -310,7 +310,7 @@ const applyOnboardingUpdates = (user, payload) => {
 
 const getProfileBodyFromRequest = async (req) => {
   let payload = mergeUploadedMediaIntoBody(req.body, req.files, [{ target: "profileImage", fieldNames: PROFILE_IMAGE_FIELDS }]);
-  payload = await applyCloudinaryProfileImage(req, payload);
+  payload = await applyProfileImageUpload(req, payload);
 
   if (Array.isArray(payload.profileImage)) {
     payload.profileImage = payload.profileImage[0] || null;

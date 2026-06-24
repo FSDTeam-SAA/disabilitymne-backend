@@ -1,13 +1,23 @@
 import httpStatus from "http-status";
+import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
-import { toUploadedMediaAsset } from "../utils/uploadedMedia.js";
+import { uploadMediaFileToR2 } from "../services/r2.service.js";
 
-const buildUploadResult = (file) => {
-  const asset = toUploadedMediaAsset(file);
-  return {
-    url: asset?.url || "",
-  };
+const asString = (value) => {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+};
+
+const cleanupTemporaryUpload = async (file) => {
+  const filePath = asString(file?.path);
+  if (!filePath) return;
+
+  try {
+    await fs.unlink(filePath);
+  } catch {
+    // Ignore cleanup errors for temporary upload files.
+  }
 };
 
 /**
@@ -17,11 +27,17 @@ const buildUploadResult = (file) => {
 export const uploadSingleImage = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError("No file found in request. Use form-data key: file", httpStatus.BAD_REQUEST);
 
-  res.status(httpStatus.CREATED).json({
-    success: true,
-    message: "Upload successful",
-    data: buildUploadResult(req.file),
-  });
+  try {
+    const asset = await uploadMediaFileToR2(req.file, { resourceType: "image", folder: asString(req.body?.folder) });
+
+    res.status(httpStatus.CREATED).json({
+      success: true,
+      message: "Upload successful",
+      data: { url: asset.url },
+    });
+  } finally {
+    await cleanupTemporaryUpload(req.file);
+  }
 });
 
 /**
@@ -31,9 +47,15 @@ export const uploadSingleImage = catchAsync(async (req, res) => {
 export const uploadSingleVideo = catchAsync(async (req, res) => {
   if (!req.file) throw new AppError("No file found in request. Use form-data key: file", httpStatus.BAD_REQUEST);
 
-  res.status(httpStatus.CREATED).json({
-    success: true,
-    message: "Upload successful",
-    data: buildUploadResult(req.file),
-  });
+  try {
+    const asset = await uploadMediaFileToR2(req.file, { resourceType: "video", folder: asString(req.body?.folder) });
+
+    res.status(httpStatus.CREATED).json({
+      success: true,
+      message: "Upload successful",
+      data: { url: asset.url },
+    });
+  } finally {
+    await cleanupTemporaryUpload(req.file);
+  }
 });

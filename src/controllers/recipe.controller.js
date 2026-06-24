@@ -6,11 +6,8 @@ import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
-import {
-  deleteCloudinaryMediaByPublicId,
-  uploadMediaFileToCloudinary,
-  uploadMediaUrlToCloudinary,
-} from "../services/cloudinary.service.js";
+import { deleteCloudinaryMediaByPublicId } from "../services/cloudinary.service.js";
+import { deleteR2ObjectByKey, isR2Url, uploadMediaFileToR2, uploadMediaUrlToR2 } from "../services/r2.service.js";
 import { Recipe } from "../models/recipe.model.js";
 import { User } from "../models/user.model.js";
 import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
@@ -18,7 +15,7 @@ import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
 const RECIPE_USER_TYPES = new Set(["normal_user", "premium_user"]);
 const RECIPE_STATUSES = new Set(["draft", "published", "archived"]);
 const RECIPE_IMAGE_FIELDS = ["recipeImages", "recipeImage", "image"];
-const CLOUDINARY_RECIPE_IMAGE_FOLDER = "recipes/images";
+const RECIPE_IMAGE_FOLDER = "recipes/images";
 const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 
 const parseMaybeJson = (value) => {
@@ -105,7 +102,7 @@ const cleanupTemporaryUploads = async (files = []) => {
   await Promise.all(files.map((file) => cleanupTemporaryUpload(file)));
 };
 
-const uploadImagesToCloudinary = async (files, folder, failureMessage) => {
+const uploadImagesToR2 = async (files, folder, failureMessage) => {
   if (!Array.isArray(files) || files.length === 0) {
     return [];
   }
@@ -113,7 +110,7 @@ const uploadImagesToCloudinary = async (files, folder, failureMessage) => {
   try {
     return await Promise.all(
       files.map((file) =>
-        uploadMediaFileToCloudinary(file, {
+        uploadMediaFileToR2(file, {
           folder,
           resourceType: "image",
         })
@@ -322,20 +319,27 @@ const extractCloudinaryMediaInfoFromUrl = (url) => {
   }
 };
 
-const getMediaAssetCloudinaryInfo = (asset) => {
+const getMediaAssetStorageInfo = (asset) => {
   const url = asString(asset?.url);
-  const parsedFromUrl = extractCloudinaryMediaInfoFromUrl(url);
+  const storedId = asString(asset?.publicId);
 
-  return {
-    publicId: asString(asset?.publicId) || parsedFromUrl.publicId,
-    resourceType: "image",
-  };
+  if (isR2Url(url)) {
+    return { provider: "r2", key: storedId, resourceType: "image" };
+  }
+
+  const parsedFromUrl = extractCloudinaryMediaInfoFromUrl(url);
+  const cloudinaryId = storedId || parsedFromUrl.publicId;
+  if (cloudinaryId) {
+    return { provider: "cloudinary", key: cloudinaryId, resourceType: "image" };
+  }
+
+  return { provider: "none", key: "", resourceType: "image" };
 };
 
 const buildMediaAssetComparisonKey = (asset) => {
-  const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
-  if (cloudinaryInfo.publicId) {
-    return `public:${cloudinaryInfo.resourceType}:${cloudinaryInfo.publicId}`;
+  const storageInfo = getMediaAssetStorageInfo(asset);
+  if (storageInfo.key) {
+    return `${storageInfo.provider}:${storageInfo.resourceType}:${storageInfo.key}`;
   }
 
   const url = asString(asset?.url);
@@ -381,7 +385,7 @@ const preserveExistingMediaMetadata = (nextAssets, existingAssets) => {
   });
 };
 
-const resolveRemovedCloudinaryAssets = (previousAssets, nextAssets) => {
+const resolveRemovedMediaAssets = (previousAssets, nextAssets) => {
   const previous = normalizeMediaList(previousAssets);
   const next = normalizeMediaList(nextAssets);
   const nextKeys = new Set(next.map((asset) => buildMediaAssetComparisonKey(asset)).filter(Boolean));
@@ -393,29 +397,30 @@ const resolveRemovedCloudinaryAssets = (previousAssets, nextAssets) => {
       continue;
     }
 
-    const cloudinaryInfo = getMediaAssetCloudinaryInfo(previousAsset);
-    if (cloudinaryInfo.publicId) {
-      removedAssets.push(cloudinaryInfo);
+    const storageInfo = getMediaAssetStorageInfo(previousAsset);
+    if (storageInfo.key) {
+      removedAssets.push(storageInfo);
     }
   }
 
   return removedAssets;
 };
 
-const deleteCloudinaryAssets = async (assets = []) => {
+const deleteMediaAssets = async (assets = []) => {
   const uniqueAssets = [];
   const seen = new Set();
 
   for (const asset of assets) {
-    const publicId = asString(asset?.publicId);
+    const key = asString(asset?.key);
+    const provider = asset?.provider === "r2" ? "r2" : "cloudinary";
     const resourceType = asString(asset?.resourceType).toLowerCase() === "video" ? "video" : "image";
-    if (!publicId) continue;
+    if (!key) continue;
 
-    const key = `${resourceType}:${publicId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const dedupeKey = `${provider}:${resourceType}:${key}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
 
-    uniqueAssets.push({ publicId, resourceType });
+    uniqueAssets.push({ provider, key, resourceType });
   }
 
   if (uniqueAssets.length === 0) {
@@ -424,29 +429,29 @@ const deleteCloudinaryAssets = async (assets = []) => {
 
   await Promise.allSettled(
     uniqueAssets.map((asset) =>
-      deleteCloudinaryMediaByPublicId(asset.publicId, {
-        resourceType: asset.resourceType,
-      })
+      asset.provider === "r2"
+        ? deleteR2ObjectByKey(asset.key)
+        : deleteCloudinaryMediaByPublicId(asset.key, { resourceType: asset.resourceType })
     )
   );
 };
 
 const isAbsoluteHttpUrl = (value) => /^https?:\/\//i.test(asString(value));
 
-const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) => {
+const convertMediaAssetsToR2IfNeeded = async (rawValue, options = {}) => {
   const assets = normalizeMediaList(rawValue);
   if (assets.length === 0) {
     return assets;
   }
 
   const folder = asString(options.folder);
-  const failureMessage = asString(options.failureMessage) || "Failed to upload media URL to Cloudinary.";
+  const failureMessage = asString(options.failureMessage) || "Failed to upload media URL to storage.";
 
   try {
     const converted = await Promise.all(
       assets.map(async (asset) => {
-        const cloudinaryInfo = getMediaAssetCloudinaryInfo(asset);
-        if (cloudinaryInfo.publicId || /res\.cloudinary\.com/i.test(asString(asset?.url))) {
+        const storageInfo = getMediaAssetStorageInfo(asset);
+        if (storageInfo.key) {
           return asset;
         }
 
@@ -455,7 +460,7 @@ const convertMediaAssetsToCloudinaryIfNeeded = async (rawValue, options = {}) =>
           return asset;
         }
 
-        return uploadMediaUrlToCloudinary(sourceUrl, {
+        return uploadMediaUrlToR2(sourceUrl, {
           folder,
           resourceType: "image",
         });
@@ -801,10 +806,10 @@ const getRecipeBodyFromRequest = async (req) => {
   if (recipeImageFiles.length > 0) {
     payload = {
       ...(payload || {}),
-      recipeImages: await uploadImagesToCloudinary(
+      recipeImages: await uploadImagesToR2(
         recipeImageFiles,
-        CLOUDINARY_RECIPE_IMAGE_FOLDER,
-        "Failed to upload recipe images to Cloudinary."
+        RECIPE_IMAGE_FOLDER,
+        "Failed to upload recipe images to storage."
       ),
     };
   }
@@ -812,9 +817,9 @@ const getRecipeBodyFromRequest = async (req) => {
   if (Object.hasOwn(payload, "recipeImages")) {
     payload = {
       ...(payload || {}),
-      recipeImages: await convertMediaAssetsToCloudinaryIfNeeded(payload.recipeImages, {
-        folder: CLOUDINARY_RECIPE_IMAGE_FOLDER,
-        failureMessage: "Failed to migrate recipe images to Cloudinary.",
+      recipeImages: await convertMediaAssetsToR2IfNeeded(payload.recipeImages, {
+        folder: RECIPE_IMAGE_FOLDER,
+        failureMessage: "Failed to migrate recipe images to storage.",
       }),
     };
   }
@@ -924,8 +929,8 @@ export const updateAdminRecipe = catchAsync(async (req, res) => {
   Object.assign(recipe, updates, { updatedBy: req.user._id });
   await recipe.save();
 
-  const removedCloudinaryAssets = resolveRemovedCloudinaryAssets(previousRecipeImages, recipe.recipeImages);
-  await deleteCloudinaryAssets(removedCloudinaryAssets);
+  const removedMediaAssets = resolveRemovedMediaAssets(previousRecipeImages, recipe.recipeImages);
+  await deleteMediaAssets(removedMediaAssets);
 
   const populated = await Recipe.findById(recipe._id).populate("assignedUser", "firstName email");
 
@@ -947,12 +952,12 @@ export const deleteAdminRecipe = catchAsync(async (req, res) => {
     throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
   }
 
-  const recipeCloudinaryAssets = normalizeMediaList(recipe.recipeImages)
-    .map((asset) => getMediaAssetCloudinaryInfo(asset))
-    .filter((asset) => asString(asset.publicId));
+  const recipeMediaAssets = normalizeMediaList(recipe.recipeImages)
+    .map((asset) => getMediaAssetStorageInfo(asset))
+    .filter((asset) => asset.key);
 
   await Recipe.deleteOne({ _id: recipe._id });
-  await deleteCloudinaryAssets(recipeCloudinaryAssets);
+  await deleteMediaAssets(recipeMediaAssets);
   await User.updateMany(
     { "favoriteRecipeRefs.recipe": recipe._id },
     { $pull: { favoriteRecipeRefs: { recipe: recipe._id } } }
