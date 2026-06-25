@@ -1143,14 +1143,11 @@ export const deleteAdminUser = catchAsync(async (req, res) => {
     throw new AppError("User not found.", httpStatus.NOT_FOUND);
   }
 
-  user.accountStatus = "deactivated";
-  user.isActive = false;
-  user.clearRefreshToken();
-  await user.save({ validateBeforeSave: false });
+  await User.deleteOne({ _id: user._id });
 
   res.status(httpStatus.OK).json({
     success: true,
-    message: "User deactivated successfully.",
+    message: "User deleted permanently.",
   });
 });
 
