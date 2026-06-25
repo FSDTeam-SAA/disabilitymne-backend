@@ -76,7 +76,7 @@ const favoriteMealItemSchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ["manual", "usda"],
+      enum: ["manual", "usda", "fatsecret"],
       default: "manual",
     },
     fdcId: {
