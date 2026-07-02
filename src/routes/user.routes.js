@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { protect } from "../middlewares/auth.js";
 import { uploadImageFields } from "../middlewares/upload.js";
-import { getMe, selectPlan, updateMe, updateMyProfileImage } from "../controllers/user.controller.js";
+import { getMe, selectPlan, updateMe, updateMyProfileImage, deleteMyAccount } from "../controllers/user.controller.js";
 import {
   addDailyTrackerNote,
   changeMyPassword,
@@ -40,6 +40,7 @@ const uploadProfileImage = uploadImageFields([
 router.use(protect);
 
 router.get("/me", getMe);
+router.delete("/me", deleteMyAccount);
 router.patch("/me", uploadProfileImage, updateMe);
 router.patch("/me/onboarding", uploadProfileImage, updateMe);
 router.patch("/me/profile-image", uploadProfileImage, updateMyProfileImage);

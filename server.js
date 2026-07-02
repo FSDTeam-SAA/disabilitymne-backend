@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 8000;
   const server = http.createServer(app);
   initChatSocket(server);
 
-  server.listen(PORT, () => {
+  server.listen(PORT, "0.0.0.0", () => {
     // eslint-disable-next-line no-console
     console.log(`Server running on http://localhost:${PORT} (${process.env.NODE_ENV || "development"})`);
   });

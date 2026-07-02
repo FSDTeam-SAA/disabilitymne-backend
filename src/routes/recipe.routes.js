@@ -9,6 +9,8 @@ import {
   getAllAccessibleRecipes,
   getExploreRecipes,
   getMyRecipes,
+  getPublicRecipeById,
+  getPublicRecipes,
   getRecipeByIdForUser,
   listPremiumUsersForRecipes,
   toggleRecipeFavorite,
@@ -22,6 +24,10 @@ const uploadRecipeImages = uploadImageFields([
   { name: "recipeImage", maxCount: 10 },
   { name: "image", maxCount: 10 },
 ]);
+
+// Public guest routes — no authentication required (normal_user recipes only).
+router.get("/public/all", getPublicRecipes);
+router.get("/public/:recipeId", getPublicRecipeById);
 
 router.use(protect);
 
