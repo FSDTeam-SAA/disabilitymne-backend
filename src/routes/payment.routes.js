@@ -7,6 +7,8 @@ import {
   stripeWebhook,
   checkoutSuccessPage,
   checkoutCancelPage,
+  verifyApplePurchase,
+  restoreApplePurchases,
 } from "../controllers/payment.controller.js";
 import { protect } from "../middlewares/auth.js";
 
@@ -21,5 +23,7 @@ router.get("/me", getMyPayments);
 router.post("/checkout", checkout);
 router.post("/checkout/confirm", confirmCheckout);
 router.get("/checkout/confirm/:sessionId", confirmCheckout);
+router.post("/apple/verify", verifyApplePurchase);
+router.post("/apple/restore", restoreApplePurchases);
 
 export default router;

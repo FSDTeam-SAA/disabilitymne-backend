@@ -1147,6 +1147,65 @@ export const getAllAccessibleRecipes = catchAsync(async (req, res) => {
   });
 });
 
+export const getPublicRecipes = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+
+  const filter = {
+    status: "published",
+    isActive: true,
+    userType: "normal_user",
+  };
+
+  if (req.query.recipeType) {
+    filter.recipeType = normalizeRecipeType(req.query.recipeType);
+  }
+
+  if (req.query.search) {
+    const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
+    filter.$or = [
+      { recipeName: pattern },
+      { howToPrepare: pattern },
+      { ingredients: { $elemMatch: pattern } },
+    ];
+  }
+
+  const [recipes, total] = await Promise.all([
+    Recipe.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Recipe.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: recipes.map((recipe) => buildRecipeSummary(recipe, { isFavorite: false })),
+    meta: buildPagination(page, limit, total),
+  });
+});
+
+export const getPublicRecipeById = catchAsync(async (req, res) => {
+  const { recipeId } = req.params;
+
+  if (!mongoose.isValidObjectId(recipeId)) {
+    throw new AppError("Invalid recipe id.", httpStatus.BAD_REQUEST);
+  }
+
+  const recipe = await Recipe.findById(recipeId);
+  if (
+    !recipe ||
+    !recipe.isActive ||
+    recipe.status !== "published" ||
+    recipe.userType !== "normal_user"
+  ) {
+    throw new AppError("Recipe not found.", httpStatus.NOT_FOUND);
+  }
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: buildRecipeDetails(recipe, { isFavorite: false }),
+  });
+});
+
 export const toggleRecipeFavorite = catchAsync(async (req, res) => {
   const { recipeId } = req.params;
 

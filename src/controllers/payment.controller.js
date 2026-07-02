@@ -11,6 +11,7 @@ import { getActivePlans, getPlanByKey as getDbPlanByKey } from "../services/subs
 import { sendEmail } from "../services/email.service.js";
 import { buildPaymentReceiptEmail } from "../utils/emailTemplates.js";
 import { serializeUser } from "../utils/serializeUser.js";
+import { processApplePurchase, processAppleRestore } from "../services/appleIap.service.js";
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "bif",
@@ -644,3 +645,45 @@ export const stripeWebhook = async (req, res) => {
     });
   }
 };
+
+export const verifyApplePurchase = catchAsync(async (req, res) => {
+  const receiptData = String(req.body?.receiptData || req.body?.receipt || "").trim();
+  const planKey = String(req.body?.planKey || "").trim().toLowerCase();
+  const productId = String(req.body?.productId || "").trim();
+  const transactionId = String(req.body?.transactionId || "").trim();
+
+  const { payment, user } = await processApplePurchase({
+    userId: req.user._id,
+    receiptData,
+    planKey,
+    productId,
+    transactionId,
+  });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Apple purchase verified successfully.",
+    data: {
+      payment: buildPaymentResponse(payment),
+      user: serializeUser(user),
+    },
+  });
+});
+
+export const restoreApplePurchases = catchAsync(async (req, res) => {
+  const receiptData = String(req.body?.receiptData || req.body?.receipt || "").trim();
+
+  const { payment, user } = await processAppleRestore({
+    userId: req.user._id,
+    receiptData,
+  });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Apple purchases restored successfully.",
+    data: {
+      payment: buildPaymentResponse(payment),
+      user: serializeUser(user),
+    },
+  });
+});

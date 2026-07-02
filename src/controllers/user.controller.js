@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { serializeUser } from "../utils/serializeUser.js";
+import { User } from "../models/user.model.js";
 import { getPlanByKey } from "../services/subscriptionPlan.service.js";
 import { uploadImageFileToR2 } from "../services/r2.service.js";
 import { WeightLog } from "../models/weightLog.model.js";
@@ -430,6 +431,24 @@ export const selectPlan = catchAsync(async (req, res) => {
       plan,
       user: serializeUser(req.user),
     },
+  });
+});
+
+export const deleteMyAccount = catchAsync(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user || !user.isActive) {
+    throw new AppError("User not found.", httpStatus.NOT_FOUND);
+  }
+
+  if (user.role === "admin") {
+    throw new AppError("Admin accounts cannot be deleted from the mobile app.", httpStatus.FORBIDDEN);
+  }
+
+  await User.deleteOne({ _id: user._id });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Account deleted permanently.",
   });
 });
 
