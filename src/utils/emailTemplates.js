@@ -142,6 +142,10 @@ const getPaymentMethodLabel = ({ paymentMethod, cardBrand, cardLast4 }) => {
     return "Manual activation";
   }
 
+  if (paymentMethod === "apple_iap") {
+    return "Apple In-App Purchase";
+  }
+
   return String(paymentMethod || "Unknown");
 };
 

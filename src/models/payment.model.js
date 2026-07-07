@@ -39,7 +39,7 @@ const paymentSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ["card", "bank_account", "manual"],
+      enum: ["card", "bank_account", "manual", "apple_iap"],
       required: true,
     },
     provider: {
@@ -78,6 +78,17 @@ const paymentSchema = new mongoose.Schema(
     },
   },
   { timestamps: true }
+);
+
+paymentSchema.index(
+  { provider: 1, transactionId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      provider: "apple",
+      transactionId: { $type: "string", $ne: "" },
+    },
+  }
 );
 
 export const Payment = mongoose.model("Payment", paymentSchema);

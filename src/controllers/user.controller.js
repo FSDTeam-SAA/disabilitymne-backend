@@ -444,6 +444,8 @@ export const deleteMyAccount = catchAsync(async (req, res) => {
     throw new AppError("Admin accounts cannot be deleted from the mobile app.", httpStatus.FORBIDDEN);
   }
 
+  const { deleteAllUserData } = await import("../services/userDeletion.service.js");
+  await deleteAllUserData(user._id);
   await User.deleteOne({ _id: user._id });
 
   res.status(httpStatus.OK).json({
