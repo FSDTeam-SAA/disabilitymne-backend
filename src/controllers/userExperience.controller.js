@@ -516,25 +516,32 @@ const buildProgramAccessFilter = (user) => {
   const filter = {
     status: "published",
     isActive: true,
-    $or: [{ userType: "normal_user" }],
   };
 
   if (isPremiumActiveUser(user)) {
-    filter.$or.push({ userType: "premium_user", assignedUser: user._id });
+    filter.userType = "premium_user";
+    filter.assignedUser = user._id;
+    return filter;
   }
 
+  filter.$or = [{ userType: "normal_user" }];
   return filter;
 };
 
 const buildMyProgramsFilter = (user, trackedProgramIds = []) => {
+  if (isPremiumActiveUser(user)) {
+    return {
+      status: "published",
+      isActive: true,
+      userType: "premium_user",
+      assignedUser: user._id,
+    };
+  }
+
   const interestConditions = [];
 
   if (Array.isArray(trackedProgramIds) && trackedProgramIds.length > 0) {
     interestConditions.push({ _id: { $in: trackedProgramIds } });
-  }
-
-  if (isPremiumActiveUser(user)) {
-    interestConditions.push({ userType: "premium_user", assignedUser: user._id });
   }
 
   if (interestConditions.length === 0) {
@@ -551,13 +558,15 @@ const buildRecipeAccessFilter = (user) => {
   const filter = {
     status: "published",
     isActive: true,
-    $or: [{ userType: "normal_user" }],
   };
 
   if (isPremiumActiveUser(user)) {
-    filter.$or.push({ userType: "premium_user", assignedUser: user._id });
+    filter.userType = "premium_user";
+    filter.assignedUser = user._id;
+    return filter;
   }
 
+  filter.$or = [{ userType: "normal_user" }];
   return filter;
 };
 

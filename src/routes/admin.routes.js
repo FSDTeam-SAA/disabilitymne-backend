@@ -6,6 +6,9 @@ import {
   createAdminSubscriptionPlan,
   deleteAdminSubscriptionPlan,
   deleteAdminUser,
+  getAdminMembershipSettings,
+  getAdminPremiumUserById,
+  getAdminPremiumUsers,
   getAdminSettingsProfile,
   getAdminSupportTicketById,
   getAdminSupportTickets,
@@ -15,6 +18,7 @@ import {
   getAdminWorkoutExperienceById,
   getAdminWorkoutExperiences,
   getDashboardOverview,
+  updateAdminMembershipSettings,
   updateAdminSupportTicket,
   updateAdminSettingsPassword,
   updateAdminSettingsProfile,
@@ -39,6 +43,10 @@ router.post("/users", createAdminUser);
 router.patch("/users/:userId/status", updateAdminUserStatus);
 router.patch("/users/:userId/role", updateAdminUserRole);
 router.delete("/users/:userId", deleteAdminUser);
+
+router.get("/premium-users", getAdminPremiumUsers);
+router.get("/premium-users/:userId", getAdminPremiumUserById);
+
 router.get("/support/tickets", getAdminSupportTickets);
 router.get("/support/tickets/:ticketId", getAdminSupportTicketById);
 router.patch("/support/tickets/:ticketId", updateAdminSupportTicket);
@@ -49,6 +57,8 @@ router.get("/workout-experiences/:experienceId", getAdminWorkoutExperienceById);
 router.get("/settings/profile", getAdminSettingsProfile);
 router.patch("/settings/profile", uploadAdminProfileImage, updateAdminSettingsProfile);
 router.patch("/settings/password", updateAdminSettingsPassword);
+router.get("/settings/membership", getAdminMembershipSettings);
+router.patch("/settings/membership", updateAdminMembershipSettings);
 
 router.get("/subscriptions/plans", getAdminSubscriptionPlans);
 router.post("/subscriptions/plans", createAdminSubscriptionPlan);

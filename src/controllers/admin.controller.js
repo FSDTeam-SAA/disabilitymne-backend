@@ -20,6 +20,14 @@ import {
 import { ensureDefaultPlansIfEmpty } from "../services/subscriptionPlan.service.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
 import { uploadImageFileToR2 } from "../services/r2.service.js";
+import {
+  assertPremiumCapacityAvailable,
+  getPremiumCapacitySnapshot,
+  updateMaxPremiumUsers,
+  buildActivePremiumFilter,
+} from "../services/premiumCapacity.service.js";
+import { Program } from "../models/program.model.js";
+import { isPremiumActiveUser } from "../utils/access.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
 const USER_ROLES = new Set(["user", "admin"]);
@@ -1040,6 +1048,7 @@ export const createAdminUser = catchAsync(async (req, res) => {
     throw new AppError("Selected plan must be active.", httpStatus.BAD_REQUEST);
   }
   const canonicalPlanKey = normalizeSubscriptionPlanKey(plan.key) || planKey;
+  await assertPremiumCapacityAvailable({ planKey: canonicalPlanKey });
   const now = new Date();
 
   const user = await User.create({
@@ -1371,6 +1380,179 @@ export const deleteAdminSubscriptionPlan = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     message: "Subscription plan deleted successfully.",
+  });
+});
+
+export const getAdminMembershipSettings = catchAsync(async (req, res) => {
+  const snapshot = await getPremiumCapacitySnapshot();
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: snapshot,
+  });
+});
+
+export const updateAdminMembershipSettings = catchAsync(async (req, res) => {
+  if (!Object.hasOwn(req.body, "maxPremiumUsers")) {
+    throw new AppError("maxPremiumUsers is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const snapshot = await updateMaxPremiumUsers(req.body.maxPremiumUsers);
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Membership capacity updated successfully.",
+    data: snapshot,
+  });
+});
+
+export const getAdminPremiumUsers = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 10, 100);
+  const skip = (page - 1) * limit;
+  const search = asString(req.query.search);
+
+  const filter = buildActivePremiumFilter();
+  if (search) {
+    const pattern = new RegExp(escapeRegex(search), "i");
+    filter.$and = [
+      ...(filter.$and || []),
+      {
+        $or: [
+          { firstName: pattern },
+          { lastName: pattern },
+          { email: pattern },
+          { phone: pattern },
+        ],
+      },
+    ];
+  }
+
+  const [users, total] = await Promise.all([
+    User.find(filter).sort({ subscriptionStartedAt: -1, createdAt: -1 }).skip(skip).limit(limit),
+    User.countDocuments(filter),
+  ]);
+
+  const userIds = users.map((user) => user._id);
+  const { NutritionPlan } = await import("../models/nutritionPlan.model.js");
+  const [programs, nutritionPlans] = await Promise.all([
+    Program.find({
+      userType: "premium_user",
+      assignedUser: { $in: userIds },
+      isActive: true,
+    }).select("_id assignedUser programName status"),
+    NutritionPlan.find({
+      assignedUser: { $in: userIds },
+      isActive: true,
+    }).select("_id assignedUser title status"),
+  ]);
+
+  const programsByUser = new Map();
+  for (const program of programs) {
+    const key = String(program.assignedUser);
+    if (!programsByUser.has(key)) programsByUser.set(key, []);
+    programsByUser.get(key).push(program);
+  }
+
+  const nutritionByUser = new Map();
+  for (const plan of nutritionPlans) {
+    const key = String(plan.assignedUser);
+    if (!nutritionByUser.has(key)) nutritionByUser.set(key, []);
+    nutritionByUser.get(key).push(plan);
+  }
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: users.map((user) => {
+      const id = String(user._id);
+      const userPrograms = programsByUser.get(id) || [];
+      const userNutrition = nutritionByUser.get(id) || [];
+      return {
+        ...toUserRow(user),
+        subscriptionStartedAt: user.subscriptionStartedAt || null,
+        subscriptionEndsAt: user.subscriptionEndsAt || null,
+        hasWorkoutPlan: userPrograms.length > 0,
+        hasNutritionPlan: userNutrition.length > 0,
+        workoutPlanCount: userPrograms.length,
+        nutritionPlanCount: userNutrition.length,
+      };
+    }),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
+  });
+});
+
+export const getAdminPremiumUserById = catchAsync(async (req, res) => {
+  const { userId } = req.params;
+  if (!mongoose.isValidObjectId(userId)) {
+    throw new AppError("Invalid user id.", httpStatus.BAD_REQUEST);
+  }
+
+  const user = await User.findById(userId);
+  if (!user || user.role !== "user") {
+    throw new AppError("User not found.", httpStatus.NOT_FOUND);
+  }
+
+  if (!isPremiumActiveUser(user)) {
+    throw new AppError("User does not have an active premium subscription.", httpStatus.BAD_REQUEST);
+  }
+
+  const { NutritionPlan } = await import("../models/nutritionPlan.model.js");
+
+  const [programs, nutritionPlans] = await Promise.all([
+    Program.find({
+      userType: "premium_user",
+      assignedUser: user._id,
+      isActive: true,
+    })
+      .sort({ updatedAt: -1 })
+      .select("_id programName status programLevel durationMinutes weekCount workoutDays createdAt updatedAt"),
+    NutritionPlan.find({
+      assignedUser: user._id,
+      isActive: true,
+    })
+      .sort({ updatedAt: -1 })
+      .select("_id title description status nutritionDays createdAt updatedAt"),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: {
+      user: {
+        ...toUserRow(user),
+        subscriptionStartedAt: user.subscriptionStartedAt || null,
+        subscriptionEndsAt: user.subscriptionEndsAt || null,
+        fitnessGoals: user.fitnessGoals || [],
+        mobilityType: user.mobilityType || "",
+        weightCurrent: user.weightCurrent || null,
+        goalWeight: user.goalWeight || null,
+        height: user.height || null,
+        age: user.age ?? null,
+        gender: user.gender || null,
+      },
+      workoutPlans: programs.map((program) => ({
+        id: program._id,
+        programName: program.programName,
+        status: program.status,
+        programLevel: program.programLevel,
+        durationMinutes: program.durationMinutes,
+        weekCount: program.weekCount,
+        dayCount: Array.isArray(program.workoutDays) ? program.workoutDays.length : 0,
+        createdAt: program.createdAt,
+        updatedAt: program.updatedAt,
+      })),
+      nutritionPlans: nutritionPlans.map((plan) => ({
+        id: plan._id,
+        title: plan.title,
+        description: plan.description || "",
+        status: plan.status,
+        dayCount: Array.isArray(plan.nutritionDays) ? plan.nutritionDays.length : 0,
+        createdAt: plan.createdAt,
+        updatedAt: plan.updatedAt,
+      })),
+    },
   });
 });
 

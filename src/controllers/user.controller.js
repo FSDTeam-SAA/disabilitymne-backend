@@ -8,6 +8,10 @@ import { getPlanByKey } from "../services/subscriptionPlan.service.js";
 import { uploadImageFileToR2 } from "../services/r2.service.js";
 import { WeightLog } from "../models/weightLog.model.js";
 import { mergeUploadedMediaIntoBody } from "../utils/uploadedMedia.js";
+import { assertPremiumCapacityAvailable } from "../services/premiumCapacity.service.js";
+import { isPremiumActiveUser } from "../utils/access.js";
+import { Program } from "../models/program.model.js";
+import { NutritionPlan } from "../models/nutritionPlan.model.js";
 
 const MAX_ONBOARDING_STEP = 8;
 const ALLOWED_LANGUAGE_CODES = new Set(["en", "sr"]);
@@ -355,9 +359,35 @@ const getProfileImageFromRequest = async (req) => {
 };
 
 export const getMe = catchAsync(async (req, res) => {
+  const base = serializeUser(req.user);
+  let hasAssignedProgram = false;
+  let hasAssignedNutritionPlan = false;
+
+  if (isPremiumActiveUser(req.user)) {
+    const [programCount, nutritionCount] = await Promise.all([
+      Program.countDocuments({
+        userType: "premium_user",
+        assignedUser: req.user._id,
+        status: "published",
+        isActive: true,
+      }),
+      NutritionPlan.countDocuments({
+        assignedUser: req.user._id,
+        status: "published",
+        isActive: true,
+      }),
+    ]);
+    hasAssignedProgram = programCount > 0;
+    hasAssignedNutritionPlan = nutritionCount > 0;
+  }
+
   res.status(httpStatus.OK).json({
     success: true,
-    data: serializeUser(req.user),
+    data: {
+      ...base,
+      hasAssignedProgram,
+      hasAssignedNutritionPlan,
+    },
   });
 });
 
@@ -402,6 +432,8 @@ export const selectPlan = catchAsync(async (req, res) => {
   if (!plan) {
     throw new AppError("Invalid planKey provided.", httpStatus.BAD_REQUEST);
   }
+
+  await assertPremiumCapacityAvailable({ user: req.user, planKey: plan.key });
 
   req.user.selectedPlan = plan.key;
 

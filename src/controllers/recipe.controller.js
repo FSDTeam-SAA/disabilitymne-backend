@@ -527,14 +527,29 @@ const isRecipeAccessibleToUser = (recipe, user) => {
   if (!recipe || !recipe.isActive) return false;
   if (user?.role === "admin") return true;
   if (recipe.status !== "published") return false;
+
+  // Premium users only access assigned private recipes or recipes in their nutrition plan.
+  if (isPremiumActiveUser(user)) {
+    return (
+      recipe.userType === "premium_user" &&
+      recipe.assignedUser &&
+      String(recipe.assignedUser._id || recipe.assignedUser) === String(user._id)
+    );
+  }
+
   if (recipe.userType === "normal_user") return true;
 
-  return (
-    isPremiumActiveUser(user) &&
-    recipe.userType === "premium_user" &&
-    recipe.assignedUser &&
-    String(recipe.assignedUser._id || recipe.assignedUser) === String(user._id)
-  );
+  return false;
+};
+
+const isRecipeInUserNutritionPlan = async (recipeId, userId) => {
+  const { NutritionPlan } = await import("../models/nutritionPlan.model.js");
+  return NutritionPlan.exists({
+    assignedUser: userId,
+    status: "published",
+    isActive: true,
+    "nutritionDays.meals.recipe": recipeId,
+  });
 };
 
 const buildRecipeSummary = (recipe, options = {}) => {
@@ -789,13 +804,16 @@ const buildUserAccessibleFilter = (user) => {
   const filter = {
     status: "published",
     isActive: true,
-    $or: [{ userType: "normal_user" }],
   };
 
+  // Premium users only see assigned private recipes — no shared catalog.
   if (isPremiumActiveUser(user)) {
-    filter.$or.push({ userType: "premium_user", assignedUser: user._id });
+    filter.userType = "premium_user";
+    filter.assignedUser = user._id;
+    return filter;
   }
 
+  filter.$or = [{ userType: "normal_user" }];
   return filter;
 };
 
@@ -1006,6 +1024,14 @@ export const getExploreRecipes = catchAsync(async (req, res) => {
   const limit = parseLimit(req.query.limit, 20, 100);
   const skip = (page - 1) * limit;
 
+  if (isPremiumActiveUser(req.user)) {
+    return res.status(httpStatus.OK).json({
+      success: true,
+      data: [],
+      meta: buildPagination(page, limit, 0),
+    });
+  }
+
   const filter = {
     status: "published",
     isActive: true,
@@ -1104,7 +1130,14 @@ export const getRecipeByIdForUser = catchAsync(async (req, res) => {
   }
 
   if (!isRecipeAccessibleToUser(recipe, req.user)) {
-    throw new AppError("You are not allowed to access this recipe.", httpStatus.FORBIDDEN);
+    if (
+      isPremiumActiveUser(req.user) &&
+      (await isRecipeInUserNutritionPlan(recipe._id, req.user._id))
+    ) {
+      // allowed via nutrition plan
+    } else {
+      throw new AppError("You are not allowed to access this recipe.", httpStatus.FORBIDDEN);
+    }
   }
 
   return res.status(httpStatus.OK).json({
@@ -1219,7 +1252,14 @@ export const toggleRecipeFavorite = catchAsync(async (req, res) => {
   }
 
   if (!isRecipeAccessibleToUser(recipe, req.user)) {
-    throw new AppError("You are not allowed to access this recipe.", httpStatus.FORBIDDEN);
+    if (
+      isPremiumActiveUser(req.user) &&
+      (await isRecipeInUserNutritionPlan(recipe._id, req.user._id))
+    ) {
+      // allowed via nutrition plan
+    } else {
+      throw new AppError("You are not allowed to access this recipe.", httpStatus.FORBIDDEN);
+    }
   }
 
   const desiredFavorite =
