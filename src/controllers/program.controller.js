@@ -1255,25 +1255,34 @@ const buildUserAccessibleFilter = (user) => {
   const filter = {
     status: "published",
     isActive: true,
-    $or: [{ userType: "normal_user" }],
   };
 
+  // Premium users only see admin-assigned private programs (no shared catalog).
   if (isPremiumActiveUser(user)) {
-    filter.$or.push({ userType: "premium_user", assignedUser: user._id });
+    filter.userType = "premium_user";
+    filter.assignedUser = user._id;
+    return filter;
   }
 
+  filter.$or = [{ userType: "normal_user" }];
   return filter;
 };
 
 const buildMyProgramsFilter = (user, trackedProgramIds = []) => {
+  // Premium: only explicitly assigned programs (not catalog programs they started).
+  if (isPremiumActiveUser(user)) {
+    return {
+      status: "published",
+      isActive: true,
+      userType: "premium_user",
+      assignedUser: user._id,
+    };
+  }
+
   const interestConditions = [];
 
   if (Array.isArray(trackedProgramIds) && trackedProgramIds.length > 0) {
     interestConditions.push({ _id: { $in: trackedProgramIds } });
-  }
-
-  if (isPremiumActiveUser(user)) {
-    interestConditions.push({ userType: "premium_user", assignedUser: user._id });
   }
 
   if (interestConditions.length === 0) {
@@ -1530,6 +1539,15 @@ export const getExplorePrograms = catchAsync(async (req, res) => {
   const limit = parseLimit(req.query.limit, 20, 100);
   const skip = (page - 1) * limit;
 
+  // Premium users do not get the shared Explore catalog.
+  if (isPremiumActiveUser(req.user)) {
+    return res.status(httpStatus.OK).json({
+      success: true,
+      data: [],
+      meta: buildPagination(page, limit, 0),
+    });
+  }
+
   const filter = {
     status: "published",
     isActive: true,
@@ -1650,7 +1668,7 @@ export const getProgramByIdForUser = catchAsync(async (req, res) => {
     throw new AppError("Program not found.", httpStatus.NOT_FOUND);
   }
 
-  const isGlobalProgram = program.userType === "normal_user";
+  const isGlobalProgram = program.userType === "normal_user" && !isPremiumActiveUser(req.user);
   const isAssignedPremiumProgram =
     isPremiumActiveUser(req.user) &&
     program.userType === "premium_user" &&

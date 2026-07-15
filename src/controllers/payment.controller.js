@@ -12,6 +12,10 @@ import { sendEmail } from "../services/email.service.js";
 import { buildPaymentReceiptEmail } from "../utils/emailTemplates.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { processApplePurchase, processAppleRestore } from "../services/appleIap.service.js";
+import {
+  assertPremiumCapacityAvailable,
+  getPremiumCapacitySnapshot,
+} from "../services/premiumCapacity.service.js";
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "bif",
@@ -246,6 +250,8 @@ const activatePlanForPayment = async (payment) => {
     throw new AppError(`Unable to resolve subscription plan "${payment.planKey}" for activation.`, httpStatus.BAD_REQUEST);
   }
 
+  await assertPremiumCapacityAvailable({ user, planKey: plan.key });
+
   activateUserPlan(user, plan, payment.paidAt || new Date());
   await user.save({ validateBeforeSave: false });
   await sendPaymentReceipt({ payment, user });
@@ -361,6 +367,17 @@ export const getPlans = catchAsync(async (req, res) => {
   });
 });
 
+export const getPremiumAvailability = catchAsync(async (req, res) => {
+  const snapshot = await getPremiumCapacitySnapshot({
+    excludeUserId: req.user?._id || null,
+  });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: snapshot,
+  });
+});
+
 export const checkout = catchAsync(async (req, res) => {
   const planKey = req.body.planKey || req.user.selectedPlan;
 
@@ -372,6 +389,8 @@ export const checkout = catchAsync(async (req, res) => {
   if (!plan) {
     throw new AppError("Invalid planKey provided.", httpStatus.BAD_REQUEST);
   }
+
+  await assertPremiumCapacityAvailable({ user: req.user, planKey: plan.key });
 
   if (Number(plan.price || 0) <= 0) {
     const payment = await completeFreePlanCheckout({ user: req.user, plan });

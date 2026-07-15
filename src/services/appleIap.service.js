@@ -7,6 +7,7 @@ import { getPlanByKey as getDbPlanByKey } from "../services/subscriptionPlan.ser
 import { resolvePlanKeyFromAppleProduct, PLAN_TO_APPLE_PRODUCT } from "../constants/appleIapProducts.js";
 import { sendEmail } from "../services/email.service.js";
 import { buildPaymentReceiptEmail } from "../utils/emailTemplates.js";
+import { assertPremiumCapacityAvailable } from "./premiumCapacity.service.js";
 
 const VERIFY_URL_PRODUCTION = "https://buy.itunes.apple.com/verifyReceipt";
 const VERIFY_URL_SANDBOX = "https://sandbox.itunes.apple.com/verifyReceipt";
@@ -246,6 +247,8 @@ export const processApplePurchase = async ({
   if (!user || !user.isActive) {
     throw new AppError("User not found.", httpStatus.NOT_FOUND);
   }
+
+  await assertPremiumCapacityAvailable({ user, planKey: plan.key });
 
   if (existingPayment) {
     if (String(existingPayment.user) !== String(userId)) {
