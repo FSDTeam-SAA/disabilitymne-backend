@@ -2,7 +2,38 @@ import mongoose from "mongoose";
 
 const NUTRITION_DAY_INDEXES = [1, 2, 3, 4, 5, 6, 7];
 const PLAN_STATUSES = ["draft", "published", "archived"];
-const MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "meal", "other"];
+/** Supports classic meal types plus structured Meal 1–3 / Snack 1–3 slots */
+const MEAL_TYPES = [
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snack",
+  "meal",
+  "other",
+  "meal_1",
+  "snack_1",
+  "meal_2",
+  "snack_2",
+  "meal_3",
+  "snack_3",
+];
+const WEEKDAY_FULL_LABELS = {
+  1: "Monday",
+  2: "Tuesday",
+  3: "Wednesday",
+  4: "Thursday",
+  5: "Friday",
+  6: "Saturday",
+  7: "Sunday",
+};
+const DEFAULT_DAY_SLOT_ORDER = [
+  "meal_1",
+  "snack_1",
+  "meal_2",
+  "snack_2",
+  "meal_3",
+  "snack_3",
+];
 
 const mealSlotSchema = new mongoose.Schema(
   {
@@ -69,7 +100,19 @@ const nutritionPlanSchema = new mongoose.Schema(
     assignedUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "assignedUser is required"],
+      default: null,
+      index: true,
+    },
+    /** Reusable meal program library template */
+    isTemplate: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    sourceTemplate: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "NutritionPlan",
+      default: null,
       index: true,
     },
     status: {
@@ -104,6 +147,12 @@ const nutritionPlanSchema = new mongoose.Schema(
 nutritionPlanSchema.pre("validate", function normalizeDays(next) {
   this.nutritionDays = Array.isArray(this.nutritionDays) ? this.nutritionDays : [];
 
+  if (this.isTemplate) {
+    this.assignedUser = null;
+  } else if (!this.assignedUser) {
+    return next(new Error("assignedUser is required for nutrition plans (or set isTemplate=true)."));
+  }
+
   const seen = new Set();
   this.nutritionDays = this.nutritionDays
     .filter((day) => day && NUTRITION_DAY_INDEXES.includes(Number(day.dayIndex)))
@@ -122,7 +171,7 @@ nutritionPlanSchema.pre("validate", function normalizeDays(next) {
 
       return {
         dayIndex,
-        label: String(day.label || "").trim(),
+        label: String(day.label || "").trim() || WEEKDAY_FULL_LABELS[dayIndex] || "",
         meals,
       };
     })
@@ -137,7 +186,14 @@ nutritionPlanSchema.pre("validate", function normalizeDays(next) {
 });
 
 nutritionPlanSchema.index({ assignedUser: 1, status: 1, isActive: 1, createdAt: -1 });
+nutritionPlanSchema.index({ isTemplate: 1, status: 1, isActive: 1, createdAt: -1 });
 nutritionPlanSchema.index({ "nutritionDays.dayIndex": 1, status: 1, isActive: 1 });
 
 export const NutritionPlan = mongoose.model("NutritionPlan", nutritionPlanSchema);
-export { NUTRITION_DAY_INDEXES, PLAN_STATUSES, MEAL_TYPES };
+export {
+  NUTRITION_DAY_INDEXES,
+  PLAN_STATUSES,
+  MEAL_TYPES,
+  WEEKDAY_FULL_LABELS,
+  DEFAULT_DAY_SLOT_ORDER,
+};

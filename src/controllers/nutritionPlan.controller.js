@@ -4,10 +4,14 @@ import AppError from "../utils/AppError.js";
 import { catchAsync } from "../utils/catchAsync.js";
 import { isPremiumActiveUser } from "../utils/access.js";
 import { toMediaUrl, toMediaUrlList } from "../utils/mediaResponse.js";
-import { NutritionPlan, MEAL_TYPES, NUTRITION_DAY_INDEXES } from "../models/nutritionPlan.model.js";
+import { NutritionPlan, MEAL_TYPES, NUTRITION_DAY_INDEXES, WEEKDAY_FULL_LABELS } from "../models/nutritionPlan.model.js";
 import { Recipe } from "../models/recipe.model.js";
 import { User } from "../models/user.model.js";
 import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
+import {
+  assignMealProgramToUser,
+  duplicateMealProgram,
+} from "../services/premiumProgramLibrary.service.js";
 
 const PREMIUM_PLAN_KEYS = getPlanKeyVariants("premium");
 const PLAN_STATUSES = new Set(["draft", "published", "archived"]);
@@ -218,6 +222,8 @@ const buildPlanSummary = (plan) => {
     title: plan.title,
     description: plan.description || "",
     assignedUser,
+    isTemplate: Boolean(plan.isTemplate),
+    sourceTemplate: plan.sourceTemplate || null,
     status: plan.status,
     isActive: plan.isActive,
     dayCount: Array.isArray(plan.nutritionDays) ? plan.nutritionDays.length : 0,
@@ -262,9 +268,18 @@ const buildCreatePayload = async (body, adminId) => {
     throw new AppError("title is required.", httpStatus.BAD_REQUEST);
   }
 
-  const assignedUser = await ensurePremiumUserAssignable(
-    body.assignedUser || body.userId || body.assignedUserId
-  );
+  const isTemplate =
+    body.isTemplate === true ||
+    body.isTemplate === "true" ||
+    asString(body.planKind || body.kind).toLowerCase() === "template";
+
+  let assignedUserId = null;
+  if (!isTemplate) {
+    const assignedUser = await ensurePremiumUserAssignable(
+      body.assignedUser || body.userId || body.assignedUserId
+    );
+    assignedUserId = assignedUser._id;
+  }
 
   const nutritionDaysInput = getField(body, ["nutritionDays", "days", "mealDays"]);
   const nutritionDays = nutritionDaysInput.provided ? parseNutritionDays(nutritionDaysInput.value) : [];
@@ -278,7 +293,8 @@ const buildCreatePayload = async (body, adminId) => {
   return {
     title,
     description: asString(body.description),
-    assignedUser: assignedUser._id,
+    assignedUser: assignedUserId,
+    isTemplate: Boolean(isTemplate),
     status,
     isActive: status !== "archived",
     nutritionDays,
@@ -386,6 +402,14 @@ export const getAdminNutritionPlans = catchAsync(async (req, res) => {
   const limit = parseLimit(req.query.limit, 20, 100);
   const skip = (page - 1) * limit;
   const filter = {};
+  const templatesOnly = req.query.templatesOnly === true || req.query.templatesOnly === "true";
+  const includeTemplates = req.query.templates === true || req.query.templates === "true";
+
+  if (templatesOnly) {
+    filter.isTemplate = true;
+  } else if (!includeTemplates) {
+    filter.isTemplate = { $ne: true };
+  }
 
   if (req.query.assignedUser) {
     filter.assignedUser = parseObjectId(req.query.assignedUser, "assignedUser");
@@ -494,6 +518,7 @@ export const getMyNutritionPlans = catchAsync(async (req, res) => {
     assignedUser: req.user._id,
     status: "published",
     isActive: true,
+    isTemplate: { $ne: true },
   };
 
   const [plans, total] = await Promise.all([
@@ -537,5 +562,45 @@ export const getNutritionPlanByIdForUser = catchAsync(async (req, res) => {
   return res.status(httpStatus.OK).json({
     success: true,
     data: buildPlanDetails(plan),
+  });
+});
+
+export const assignNutritionPlanToPremiumUser = catchAsync(async (req, res) => {
+  const { planId } = req.params;
+  const userId = req.body?.userId || req.body?.assignedUser || req.body?.assignedUserId;
+  const allowDuplicate = req.body?.allowDuplicate === true || req.body?.allowDuplicate === "true";
+
+  const assigned = await assignMealProgramToUser({
+    planId,
+    userId,
+    adminId: req.user._id,
+    allowDuplicate,
+  });
+
+  const populated = await populatePlanQuery(NutritionPlan.findById(assigned._id));
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Meal program assigned to premium user successfully.",
+    data: buildPlanDetails(populated),
+  });
+});
+
+export const duplicateAdminNutritionPlan = catchAsync(async (req, res) => {
+  const { planId } = req.params;
+  const asTemplate = req.body?.asTemplate !== false && req.body?.asTemplate !== "false";
+
+  const duplicated = await duplicateMealProgram({
+    planId,
+    adminId: req.user._id,
+    asTemplate,
+  });
+
+  const populated = await populatePlanQuery(NutritionPlan.findById(duplicated._id));
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Meal program duplicated successfully.",
+    data: buildPlanDetails(populated),
   });
 });

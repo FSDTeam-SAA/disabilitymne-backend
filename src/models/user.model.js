@@ -387,6 +387,17 @@ const userSchema = new mongoose.Schema(
       type: heightMeasurementSchema,
       default: null,
     },
+    activityLevel: {
+      type: String,
+      enum: [
+        "sedentary",
+        "lightly_active",
+        "moderately_active",
+        "very_active",
+        "extra_active",
+      ],
+      default: "moderately_active",
+    },
     fitnessGoals: [
       {
         type: String,

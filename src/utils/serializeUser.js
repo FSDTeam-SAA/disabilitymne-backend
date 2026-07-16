@@ -1,4 +1,5 @@
 import { toMediaUrl } from "./mediaResponse.js";
+import { deriveSubscriptionStatus } from "../services/subscriptionSync.service.js";
 
 export const serializeUser = (user) => ({
   id: user._id,
@@ -21,6 +22,7 @@ export const serializeUser = (user) => ({
   weightCurrent: user.weightCurrent || null,
   goalWeight: user.goalWeight || null,
   height: user.height || null,
+  activityLevel: user.activityLevel || "moderately_active",
   fitnessGoals: user.fitnessGoals || [],
   mobilityType: user.mobilityType || null,
   mobilityTypeOther: user.mobilityTypeOther || null,
@@ -28,7 +30,7 @@ export const serializeUser = (user) => ({
   onboardingStep: user.onboardingStep,
   onboardingCompleted: user.onboardingCompleted,
   selectedPlan: user.selectedPlan || null,
-  subscriptionStatus: user.subscriptionStatus,
+  subscriptionStatus: deriveSubscriptionStatus(user),
   trialActivatedAt: user.trialActivatedAt || null,
   trialEndsAt: user.trialEndsAt || null,
   subscriptionStartedAt: user.subscriptionStartedAt || null,

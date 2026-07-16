@@ -6,6 +6,7 @@ import {
   createAdminSubscriptionPlan,
   deleteAdminSubscriptionPlan,
   deleteAdminUser,
+  deleteAdminPremiumUser,
   getAdminMembershipSettings,
   getAdminPremiumUserById,
   getAdminPremiumUsers,
@@ -13,6 +14,9 @@ import {
   getAdminSupportTicketById,
   getAdminSupportTickets,
   getAdminSubscriptionPlans,
+  getAdminSubscriptions,
+  getAdminSubscriptionHistory,
+  syncAdminSubscriptions,
   getAdminUsers,
   getAdminWorkoutProgress,
   getAdminWorkoutExperienceById,
@@ -46,6 +50,7 @@ router.delete("/users/:userId", deleteAdminUser);
 
 router.get("/premium-users", getAdminPremiumUsers);
 router.get("/premium-users/:userId", getAdminPremiumUserById);
+router.delete("/premium-users/:userId", deleteAdminPremiumUser);
 
 router.get("/support/tickets", getAdminSupportTickets);
 router.get("/support/tickets/:ticketId", getAdminSupportTicketById);
@@ -60,6 +65,9 @@ router.patch("/settings/password", updateAdminSettingsPassword);
 router.get("/settings/membership", getAdminMembershipSettings);
 router.patch("/settings/membership", updateAdminMembershipSettings);
 
+router.get("/subscriptions", getAdminSubscriptions);
+router.post("/subscriptions/sync", syncAdminSubscriptions);
+router.get("/subscriptions/history", getAdminSubscriptionHistory);
 router.get("/subscriptions/plans", getAdminSubscriptionPlans);
 router.post("/subscriptions/plans", createAdminSubscriptionPlan);
 router.patch("/subscriptions/plans/:planKey", updateAdminSubscriptionPlan);

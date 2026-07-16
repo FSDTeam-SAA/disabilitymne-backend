@@ -276,6 +276,24 @@ const applyOnboardingUpdates = (user, payload) => {
     user.height = updates.height;
   }
 
+  if (Object.hasOwn(updates, "activityLevel")) {
+    const allowed = new Set([
+      "sedentary",
+      "lightly_active",
+      "moderately_active",
+      "very_active",
+      "extra_active",
+    ]);
+    const level = asString(updates.activityLevel).toLowerCase();
+    if (!allowed.has(level)) {
+      throw new AppError(
+        "activityLevel must be one of: sedentary, lightly_active, moderately_active, very_active, extra_active.",
+        httpStatus.BAD_REQUEST
+      );
+    }
+    user.activityLevel = level;
+  }
+
   if (Object.hasOwn(updates, "fitnessGoals")) {
     if (!Array.isArray(updates.fitnessGoals)) {
       throw new AppError("fitnessGoals must be an array.", httpStatus.BAD_REQUEST);
@@ -359,6 +377,9 @@ const getProfileImageFromRequest = async (req) => {
 };
 
 export const getMe = catchAsync(async (req, res) => {
+  const { syncUserSubscriptionStatus } = await import("../services/subscriptionSync.service.js");
+  await syncUserSubscriptionStatus(req.user);
+
   const base = serializeUser(req.user);
   let hasAssignedProgram = false;
   let hasAssignedNutritionPlan = false;
@@ -370,11 +391,13 @@ export const getMe = catchAsync(async (req, res) => {
         assignedUser: req.user._id,
         status: "published",
         isActive: true,
+        isTemplate: { $ne: true },
       }),
       NutritionPlan.countDocuments({
         assignedUser: req.user._id,
         status: "published",
         isActive: true,
+        isTemplate: { $ne: true },
       }),
     ]);
     hasAssignedProgram = programCount > 0;
@@ -394,8 +417,25 @@ export const getMe = catchAsync(async (req, res) => {
 export const updateMe = catchAsync(async (req, res) => {
   const updates = await getProfileBodyFromRequest(req);
   const previousWeight = req.user.weightCurrent ? { ...req.user.weightCurrent } : null;
+  const metricsChanged = ["weightCurrent", "height", "age", "gender", "activityLevel"].some((key) =>
+    Object.hasOwn(updates, key)
+  );
 
   applyOnboardingUpdates(req.user, updates);
+
+  // Reset adaptive calorie baseline when body metrics change so diary recalculates
+  if (metricsChanged && req.user.adaptiveNutrition) {
+    req.user.adaptiveNutrition = {
+      ...(req.user.adaptiveNutrition.toObject?.() || req.user.adaptiveNutrition || {}),
+      currentDailyCalories: 0,
+      lastAdjustedAt: null,
+      lastAdjustmentDeltaKcal: 0,
+      lastCurrentWeekAvgKg: null,
+      lastPreviousWeekAvgKg: null,
+      lastWeeklyChangePercent: null,
+    };
+  }
+
   await req.user.save();
   await recordWeightSnapshotIfNeeded({
     user: req.user,

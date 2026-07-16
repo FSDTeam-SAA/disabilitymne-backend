@@ -3,6 +3,8 @@ import { protect, restrictTo } from "../middlewares/auth.js";
 import {
   createNutritionPlan,
   deleteAdminNutritionPlan,
+  duplicateAdminNutritionPlan,
+  assignNutritionPlanToPremiumUser,
   getAdminNutritionPlanById,
   getAdminNutritionPlans,
   getMyNutritionPlans,
@@ -18,6 +20,8 @@ router.use(protect);
 
 adminRouter.get("/premium-users", listPremiumUsersForNutritionPlans);
 adminRouter.route("/").get(getAdminNutritionPlans).post(createNutritionPlan);
+adminRouter.post("/:planId/assign", assignNutritionPlanToPremiumUser);
+adminRouter.post("/:planId/duplicate", duplicateAdminNutritionPlan);
 adminRouter
   .route("/:planId")
   .get(getAdminNutritionPlanById)

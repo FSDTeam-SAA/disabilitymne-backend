@@ -202,6 +202,70 @@ const normalizeMealType = (value, required = true) => {
   return normalized;
 };
 
+const ACTIVITY_MULTIPLIERS = {
+  sedentary: 1.2,
+  lightly_active: 1.375,
+  moderately_active: 1.55,
+  very_active: 1.725,
+  extra_active: 1.9,
+};
+
+const toCm = (measurement) => {
+  if (!measurement || typeof measurement.value !== "number") return null;
+  if (measurement.unit === "cm") return measurement.value;
+  if (measurement.unit === "ft" || measurement.unit === "in") {
+    // Expect value already in cm when unit is mixed; fall through
+  }
+  if (measurement.unit === "m") return measurement.value * 100;
+  return measurement.value;
+};
+
+/**
+ * Mifflin-St Jeor BMR + activity TDEE.
+ * Falls back to weight×kcal/kg when profile data is incomplete.
+ */
+const calculateBmrTdee = ({ weightKg, heightCm, age, gender, activityLevel, goal }) => {
+  if (!weightKg || weightKg <= 0) return null;
+
+  const resolvedHeight = Number(heightCm);
+  const resolvedAge = Number(age);
+  const hasAnthropometrics =
+    Number.isFinite(resolvedHeight) &&
+    resolvedHeight > 0 &&
+    Number.isFinite(resolvedAge) &&
+    resolvedAge > 0;
+
+  let bmr = null;
+  let tdee = null;
+
+  if (hasAnthropometrics) {
+    const sex = String(gender || "").toLowerCase();
+    // Mifflin-St Jeor
+    if (sex === "male") {
+      bmr = 10 * weightKg + 6.25 * resolvedHeight - 5 * resolvedAge + 5;
+    } else if (sex === "female") {
+      bmr = 10 * weightKg + 6.25 * resolvedHeight - 5 * resolvedAge - 161;
+    } else {
+      // Prefer-not-to-say / other → average of male/female constants
+      bmr = 10 * weightKg + 6.25 * resolvedHeight - 5 * resolvedAge - 78;
+    }
+
+    const activityKey = String(activityLevel || "moderately_active").toLowerCase();
+    const multiplier = ACTIVITY_MULTIPLIERS[activityKey] || ACTIVITY_MULTIPLIERS.moderately_active;
+    tdee = bmr * multiplier;
+
+    // Goal adjustment on TDEE
+    if (goal === "fat_loss") tdee *= 0.85;
+    else if (goal === "muscle_gain") tdee *= 1.1;
+  }
+
+  return {
+    bmr: bmr !== null ? round(bmr, 0) : null,
+    tdee: tdee !== null ? round(tdee, 0) : null,
+    activityLevel: String(activityLevel || "moderately_active").toLowerCase(),
+  };
+};
+
 const calculateMacroAndCalorieTargets = ({
   weightKg,
   goal,
@@ -210,7 +274,20 @@ const calculateMacroAndCalorieTargets = ({
   fatPerKg,
   caloriesPerKg,
   recommendedCaloriesValue,
+  heightCm,
+  age,
+  gender,
+  activityLevel,
 }) => {
+  const energy = calculateBmrTdee({
+    weightKg,
+    heightCm,
+    age,
+    gender,
+    activityLevel,
+    goal,
+  });
+
   const proteinG = round(weightKg * proteinPerKg, 1);
   const carbsG = round(weightKg * carbsPerKg, 1);
   const fatG = round(weightKg * fatPerKg, 1);
@@ -224,36 +301,66 @@ const calculateMacroAndCalorieTargets = ({
   const minCalories = round(weightKg * goalRange.min, 0);
   const maxCalories = round(weightKg * goalRange.max, 0);
   const baselineCaloriesPerKg = GOAL_BASELINE_KCAL_PER_KG[goal] || GOAL_BASELINE_KCAL_PER_KG.maintenance;
-  const recommendedCalories =
-    caloriesPerKg !== undefined
-      ? round(weightKg * caloriesPerKg, 0)
-      : Number.isFinite(Number(recommendedCaloriesValue))
-      ? round(Number(recommendedCaloriesValue), 0)
-      : round(weightKg * baselineCaloriesPerKg, 0);
-  const remainingCalories = round(recommendedCalories - macroCalories, 1);
+
+  let recommendedCalories;
+  if (caloriesPerKg !== undefined) {
+    recommendedCalories = round(weightKg * caloriesPerKg, 0);
+  } else if (Number.isFinite(Number(recommendedCaloriesValue)) && Number(recommendedCaloriesValue) > 0) {
+    recommendedCalories = round(Number(recommendedCaloriesValue), 0);
+  } else if (energy?.tdee) {
+    recommendedCalories = energy.tdee;
+  } else {
+    recommendedCalories = round(weightKg * baselineCaloriesPerKg, 0);
+  }
+
+  // When TDEE is available and no explicit override, rebalance macros from calories
+  // so protein/carbs/fat stay consistent with daily calories after weight changes.
+  let finalProteinG = proteinG;
+  let finalCarbsG = carbsG;
+  let finalFatG = fatG;
+  if (energy?.tdee && caloriesPerKg === undefined) {
+    // Keep protein target from weight; distribute remaining calories to carbs/fat
+    finalProteinG = proteinG;
+    const proteinCals = finalProteinG * 4;
+    const remaining = Math.max(recommendedCalories - proteinCals, recommendedCalories * 0.3);
+    const fatRatio = 0.3;
+    const carbsRatio = 0.7;
+    finalFatG = round((remaining * fatRatio) / 9, 1);
+    finalCarbsG = round((remaining * carbsRatio) / 4, 1);
+  }
+
+  const finalProteinCalories = round(finalProteinG * 4, 1);
+  const finalCarbsCalories = round(finalCarbsG * 4, 1);
+  const finalFatCalories = round(finalFatG * 9, 1);
+  const finalMacroCalories = round(finalProteinCalories + finalCarbsCalories + finalFatCalories, 1);
+  const remainingCalories = round(recommendedCalories - finalMacroCalories, 1);
 
   return {
     weightKg: round(weightKg, 2),
     goal,
+    bmr: energy?.bmr ?? null,
+    tdee: energy?.tdee ?? null,
+    activityLevel: energy?.activityLevel ?? null,
     multipliers: {
       proteinPerKg,
       carbsPerKg,
       fatPerKg,
     },
     macros: {
-      proteinG,
-      carbsG,
-      fatG,
+      proteinG: finalProteinG,
+      carbsG: finalCarbsG,
+      fatG: finalFatG,
     },
     calories: {
-      proteinCalories,
-      carbsCalories,
-      fatCalories,
-      macroCalories,
+      proteinCalories: finalProteinCalories,
+      carbsCalories: finalCarbsCalories,
+      fatCalories: finalFatCalories,
+      macroCalories: finalMacroCalories,
       recommendedCalories,
       minCalories,
       maxCalories,
       remainingCalories,
+      dailyCalories: recommendedCalories,
     },
   };
 };
@@ -467,14 +574,77 @@ const resolveTargetSummaryFromSource = async (source, user, { weightRequired = f
   const fatPerKg = parseNumber(source.fatPerKg, "fatPerKg", 0, false) ?? DEFAULT_MACRO_PER_KG.fat;
   const caloriesPerKg = parseNumber(source.caloriesPerKg, "caloriesPerKg", 1, false);
 
-  const adaptiveRecommendedCalories =
-    caloriesPerKg === undefined && user
-      ? await resolveAdaptiveRecommendedCalories({
-          user,
-          goal,
-          weightKg,
-        })
-      : null;
+  const heightCm =
+    parseNumber(source.heightCm, "heightCm", 1, false) ??
+    parseNumber(source.height, "height", 1, false) ??
+    toCm(user?.height);
+  const age =
+    parseNumber(source.age, "age", 1, false) ??
+    (Number.isFinite(Number(user?.age)) ? Number(user.age) : undefined);
+  const gender = asString(source.gender) || asString(user?.gender) || "";
+  const activityLevel =
+    asString(source.activityLevel) ||
+    asString(user?.activityLevel) ||
+    "moderately_active";
+
+  // Prefer fresh BMR/TDEE whenever anthropometrics are available and no explicit
+  // caloriesPerKg override is provided. This fixes stale calories after weight changes.
+  const hasAnthropometrics =
+    Number.isFinite(Number(heightCm)) &&
+    Number(heightCm) > 0 &&
+    Number.isFinite(Number(age)) &&
+    Number(age) > 0;
+
+  const forceRecalculate =
+    source.forceRecalculate === true ||
+    source.forceRecalculate === "true" ||
+    Boolean(source.weightKg) ||
+    Boolean(source.heightCm) ||
+    Boolean(source.height) ||
+    Boolean(source.age) ||
+    Boolean(source.gender) ||
+    Boolean(source.activityLevel) ||
+    hasAnthropometrics ||
+    !Number(user?.adaptiveNutrition?.currentDailyCalories);
+
+  let adaptiveRecommendedCalories = null;
+  if (caloriesPerKg === undefined && user && !forceRecalculate) {
+    adaptiveRecommendedCalories = await resolveAdaptiveRecommendedCalories({
+      user,
+      goal,
+      weightKg,
+    });
+  } else if (caloriesPerKg === undefined && user) {
+    const preview = calculateBmrTdee({
+      weightKg,
+      heightCm,
+      age,
+      gender,
+      activityLevel,
+      goal,
+    });
+    if (preview?.tdee) {
+      user.adaptiveNutrition = {
+        ...(user.adaptiveNutrition || {}),
+        goal,
+        currentDailyCalories: preview.tdee,
+        startedAt: user.adaptiveNutrition?.startedAt || new Date(),
+        lastAdjustedAt: user.adaptiveNutrition?.lastAdjustedAt || new Date(),
+        lastAdjustmentDeltaKcal: Number(user.adaptiveNutrition?.lastAdjustmentDeltaKcal || 0),
+        lastCurrentWeekAvgKg: user.adaptiveNutrition?.lastCurrentWeekAvgKg ?? null,
+        lastPreviousWeekAvgKg: user.adaptiveNutrition?.lastPreviousWeekAvgKg ?? null,
+        lastWeeklyChangePercent: user.adaptiveNutrition?.lastWeeklyChangePercent ?? null,
+      };
+      await user.save({ validateBeforeSave: false });
+      adaptiveRecommendedCalories = preview.tdee;
+    } else {
+      adaptiveRecommendedCalories = await resolveAdaptiveRecommendedCalories({
+        user,
+        goal,
+        weightKg,
+      });
+    }
+  }
 
   return calculateMacroAndCalorieTargets({
     weightKg,
@@ -484,6 +654,10 @@ const resolveTargetSummaryFromSource = async (source, user, { weightRequired = f
     fatPerKg,
     caloriesPerKg,
     recommendedCaloriesValue: adaptiveRecommendedCalories,
+    heightCm,
+    age,
+    gender,
+    activityLevel,
   });
 };
 

@@ -15,6 +15,10 @@ import { UserExerciseSetting } from "../models/userExerciseSetting.model.js";
 import { UserProgram } from "../models/userProgram.model.js";
 import { User } from "../models/user.model.js";
 import { getPlanKeyVariants } from "../constants/subscriptionPlans.js";
+import {
+  assignWorkoutProgramToUser,
+  duplicateWorkoutProgram,
+} from "../services/premiumProgramLibrary.service.js";
 
 const PROGRAM_LEVELS = new Set(["beginner", "intermediate", "advanced"]);
 const PROGRAM_USER_TYPES = new Set(["normal_user", "premium_user"]);
@@ -625,7 +629,12 @@ const ensurePremiumUserAssignable = async (userId) => {
   return user;
 };
 
-const validateLinkedExercises = async ({ exerciseIds, userType, assignedUserId }) => {
+const validateLinkedExercises = async ({
+  exerciseIds,
+  userType,
+  assignedUserId,
+  allowLibraryExercises = false,
+}) => {
   if (!Array.isArray(exerciseIds) || exerciseIds.length === 0) {
     throw new AppError("At least one exercise must be selected.", httpStatus.BAD_REQUEST);
   }
@@ -661,7 +670,7 @@ const validateLinkedExercises = async ({ exerciseIds, userType, assignedUserId }
   }
 
   if (userType === "premium_user") {
-    if (!assignedUserId) {
+    if (!assignedUserId && !allowLibraryExercises) {
       throw new AppError("assignedUser is required for premium_user programs.", httpStatus.BAD_REQUEST);
     }
 
@@ -670,6 +679,13 @@ const validateLinkedExercises = async ({ exerciseIds, userType, assignedUserId }
       if (!exercise) continue;
 
       if (exercise.userType === "all_user") continue;
+
+      if (allowLibraryExercises && !assignedUserId) {
+        throw new AppError(
+          "Premium program templates can only include all_user (library) exercises.",
+          httpStatus.BAD_REQUEST
+        );
+      }
 
       const isMatchingPrivateExercise =
         exercise.userType === "premium_user" &&
@@ -728,6 +744,8 @@ const normalizeSetTemplatesForResponse = (rawSets) =>
         reps: Number.isFinite(Number(set.reps)) ? Number(set.reps) : undefined,
         durationSeconds: Number.isFinite(Number(set.durationSeconds)) ? Number(set.durationSeconds) : undefined,
         weightKg: Number.isFinite(Number(set.weightKg)) && Number(set.weightKg) >= 0 ? Number(set.weightKg) : 1,
+        restSeconds: Number.isFinite(Number(set.restSeconds)) && Number(set.restSeconds) >= 0 ? Number(set.restSeconds) : undefined,
+        notes: typeof set.notes === "string" ? set.notes.trim() : "",
       }))
     : [];
 
@@ -877,6 +895,8 @@ const buildProgramSummary = (program) => {
     programLevel: program.programLevel,
     userType: program.userType,
     plan: program.userType,
+    isTemplate: Boolean(program.isTemplate),
+    sourceTemplate: program.sourceTemplate || null,
     assignedUser: toAssignedUser(program.assignedUser),
     programDescription: program.programDescription,
     safetyNote: program.safetyNote,
@@ -1009,7 +1029,14 @@ const buildCreatePayload = async (body) => {
   );
 
   let assignedUser = null;
-  if (userType === "premium_user") {
+  const isTemplate =
+    parsedBody.isTemplate === true ||
+    parsedBody.isTemplate === "true" ||
+    asString(parsedBody.programKind || parsedBody.kind).toLowerCase() === "template";
+
+  if (isTemplate) {
+    // Premium reusable library template — no assigned user
+  } else if (userType === "premium_user") {
     const assignedInput = getField(parsedBody, ["assignedUser", "assignedUserId", "targetUserId", "userId"]).value;
     const premiumUser = await ensurePremiumUserAssignable(assignedInput);
     assignedUser = premiumUser._id;
@@ -1040,10 +1067,13 @@ const buildCreatePayload = async (body) => {
     ...new Set(normalizedWorkoutDays.flatMap((day) => day.exerciseIds || []).filter(Boolean)),
   ];
 
+  const effectiveUserType = isTemplate ? "premium_user" : userType;
+
   const exerciseRefs = await validateLinkedExercises({
     exerciseIds: uniqueExerciseIds,
-    userType,
+    userType: effectiveUserType,
     assignedUserId: assignedUser,
+    allowLibraryExercises: isTemplate,
   });
   const exerciseRefById = new Map(exerciseRefs.map((exerciseRef) => [exerciseRef.toString(), exerciseRef]));
   normalizedWorkoutDays = buildWorkoutDayPayload(normalizedWorkoutDays, exerciseRefById);
@@ -1055,8 +1085,9 @@ const buildCreatePayload = async (body) => {
     programDuration,
     durationMinutes,
     programLevel,
-    userType,
+    userType: effectiveUserType,
     assignedUser,
+    isTemplate: Boolean(isTemplate),
     programDescription,
     safetyNote,
     mobilityType,
@@ -1255,6 +1286,7 @@ const buildUserAccessibleFilter = (user) => {
   const filter = {
     status: "published",
     isActive: true,
+    isTemplate: { $ne: true },
   };
 
   // Premium users only see admin-assigned private programs (no shared catalog).
@@ -1276,6 +1308,7 @@ const buildMyProgramsFilter = (user, trackedProgramIds = []) => {
       isActive: true,
       userType: "premium_user",
       assignedUser: user._id,
+      isTemplate: { $ne: true },
     };
   }
 
@@ -1373,9 +1406,24 @@ export const getAdminPrograms = catchAsync(async (req, res) => {
   const skip = (page - 1) * limit;
 
   const filter = {};
+  const includeTemplates = req.query.templates === true || req.query.templates === "true";
+  const templatesOnly = req.query.templatesOnly === true || req.query.templatesOnly === "true";
 
+  // Program Management shows STANDARD programs only unless explicitly filtered.
+  // Premium programs / templates are managed under Premium Users library.
   if (req.query.userType || req.query.plan) {
     filter.userType = normalizeProgramUserType(req.query.userType || req.query.plan);
+  } else if (!templatesOnly && !includeTemplates) {
+    filter.userType = "normal_user";
+  }
+
+  if (templatesOnly) {
+    filter.isTemplate = true;
+    filter.userType = "premium_user";
+  } else if (!includeTemplates && filter.userType === "premium_user") {
+    filter.isTemplate = { $ne: true };
+  } else if (!includeTemplates && !templatesOnly) {
+    filter.isTemplate = { $ne: true };
   }
 
   if (req.query.status) {
@@ -1708,5 +1756,45 @@ export const getAllAccessiblePrograms = catchAsync(async (req, res) => {
     success: true,
     data: programs.map((program) => buildProgramSummaryForUser(program, userSettingsMap)),
     meta: buildPagination(page, limit, total),
+  });
+});
+
+export const assignProgramToPremiumUser = catchAsync(async (req, res) => {
+  const { programId } = req.params;
+  const userId = req.body?.userId || req.body?.assignedUser || req.body?.assignedUserId;
+  const allowDuplicate = req.body?.allowDuplicate === true || req.body?.allowDuplicate === "true";
+
+  const assigned = await assignWorkoutProgramToUser({
+    programId,
+    userId,
+    adminId: req.user._id,
+    allowDuplicate,
+  });
+
+  const populated = await populateProgramQuery(Program.findById(assigned._id));
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Workout program assigned to premium user successfully.",
+    data: buildProgramDetails(populated),
+  });
+});
+
+export const duplicateAdminProgram = catchAsync(async (req, res) => {
+  const { programId } = req.params;
+  const asTemplate = req.body?.asTemplate !== false && req.body?.asTemplate !== "false";
+
+  const duplicated = await duplicateWorkoutProgram({
+    programId,
+    adminId: req.user._id,
+    asTemplate,
+  });
+
+  const populated = await populateProgramQuery(Program.findById(duplicated._id));
+
+  res.status(httpStatus.CREATED).json({
+    success: true,
+    message: "Workout program duplicated successfully.",
+    data: buildProgramDetails(populated),
   });
 });

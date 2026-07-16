@@ -28,6 +28,14 @@ import {
 } from "../services/premiumCapacity.service.js";
 import { Program } from "../models/program.model.js";
 import { isPremiumActiveUser } from "../utils/access.js";
+import {
+  syncExpiredSubscriptions,
+  syncUserSubscriptionStatus,
+  toSubscriptionSummary,
+} from "../services/subscriptionSync.service.js";
+import { removePremiumAccess, deletePremiumRelatedRecords } from "../services/premiumUser.service.js";
+import { deleteAllUserData } from "../services/userDeletion.service.js";
+import { SubscriptionHistory } from "../models/subscriptionHistory.model.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
 const USER_ROLES = new Set(["user", "admin"]);
@@ -265,21 +273,27 @@ const subscriptionBadge = (user) => {
   return PLAN_LABELS[key] || "No plan";
 };
 
-const toUserRow = (user) => ({
-  id: user._id,
-  name: `${asString(user.firstName)} ${asString(user.lastName)}`.trim() || user.firstName,
-  email: user.email,
-  phone: user.phone || "",
-  createdAt: user.createdAt,
-  subscription: subscriptionBadge(user),
-  selectedPlan: normalizeSubscriptionPlanKey(user.selectedPlan) || null,
-  mobilityType: user.mobilityType || "",
-  status: user.accountStatus || (user.isActive ? "active" : "deactivated"),
-  isActive: Boolean(user.isActive),
-  isSponsored: Boolean(user.isSponsored),
-  sponsorshipNote: asString(user?.sponsorship?.note) || "",
-  role: user.role || "user",
-});
+const toUserRow = (user) => {
+  const subscription = toSubscriptionSummary(user);
+  return {
+    id: user._id,
+    name: `${asString(user.firstName)} ${asString(user.lastName)}`.trim() || user.firstName,
+    email: user.email,
+    phone: user.phone || "",
+    createdAt: user.createdAt,
+    subscription: subscriptionBadge(user),
+    selectedPlan: subscription.planKey,
+    subscriptionStatus: subscription.subscriptionStatus,
+    subscriptionStartedAt: subscription.subscriptionStartedAt,
+    subscriptionEndsAt: subscription.subscriptionEndsAt,
+    mobilityType: user.mobilityType || "",
+    status: user.accountStatus || (user.isActive ? "active" : "deactivated"),
+    isActive: Boolean(user.isActive),
+    isSponsored: Boolean(user.isSponsored),
+    sponsorshipNote: asString(user?.sponsorship?.note) || "",
+    role: user.role || "user",
+  };
+};
 
 const toPlanResponse = (plan) => ({
   key: normalizeSubscriptionPlanKey(plan.key) || String(plan.key || "").toLowerCase(),
@@ -1152,11 +1166,200 @@ export const deleteAdminUser = catchAsync(async (req, res) => {
     throw new AppError("User not found.", httpStatus.NOT_FOUND);
   }
 
+  await deletePremiumRelatedRecords(user._id);
+  await deleteAllUserData(user._id);
   await User.deleteOne({ _id: user._id });
 
   res.status(httpStatus.OK).json({
     success: true,
     message: "User deleted permanently.",
+  });
+});
+
+/**
+ * Remove premium access while keeping the normal user account.
+ * Cascades soft-delete of assigned premium workout/meal content.
+ */
+export const deleteAdminPremiumUser = catchAsync(async (req, res) => {
+  const { userId } = req.params;
+  const hardDelete = req.query.hard === true || req.query.hard === "true" || req.body?.hardDelete === true;
+
+  if (!mongoose.isValidObjectId(userId)) {
+    throw new AppError("Invalid user id.", httpStatus.BAD_REQUEST);
+  }
+
+  const user = await User.findById(userId);
+  if (!user || user.role !== "user") {
+    throw new AppError("User not found.", httpStatus.NOT_FOUND);
+  }
+
+  const planKey = normalizeSubscriptionPlanKey(user.selectedPlan);
+  if (planKey !== "premium" && !isPremiumActiveUser(user)) {
+    throw new AppError("User is not a premium subscriber.", httpStatus.BAD_REQUEST);
+  }
+
+  if (hardDelete) {
+    await deletePremiumRelatedRecords(user._id);
+    await deleteAllUserData(user._id);
+    await User.deleteOne({ _id: user._id });
+    return res.status(httpStatus.OK).json({
+      success: true,
+      message: "Premium user account deleted permanently.",
+    });
+  }
+
+  await removePremiumAccess(user, {
+    changedBy: req.user._id,
+    note: asString(req.body?.note) || "Premium access removed by admin",
+  });
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Premium access removed. User account retained as a normal user.",
+    data: toUserRow(user),
+  });
+});
+
+export const getAdminSubscriptions = catchAsync(async (req, res) => {
+  await syncExpiredSubscriptions({ limit: 500 });
+
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const search = asString(req.query.search);
+  const statusFilter = asString(req.query.status).toLowerCase();
+  const planFilter = normalizeSubscriptionPlanKey(req.query.plan || req.query.planKey);
+
+  const filter = { role: "user" };
+
+  if (planFilter) {
+    filter.selectedPlan = { $in: getPlanKeyVariants(planFilter) };
+  }
+
+  if (statusFilter && statusFilter !== "all") {
+    if (statusFilter === "expired") {
+      filter.$or = [
+        { subscriptionStatus: "expired" },
+        {
+          subscriptionStatus: { $in: ["active", "trial"] },
+          subscriptionEndsAt: { $ne: null, $lte: new Date() },
+        },
+      ];
+    } else {
+      filter.subscriptionStatus = statusFilter;
+      if (statusFilter === "active" || statusFilter === "trial") {
+        filter.$and = [
+          {
+            $or: [{ subscriptionEndsAt: null }, { subscriptionEndsAt: { $gt: new Date() } }],
+          },
+        ];
+      }
+    }
+  } else {
+    // Default: show users who have (or had) a subscription relationship
+    filter.subscriptionStatus = { $nin: ["none"] };
+  }
+
+  if (search) {
+    const pattern = new RegExp(escapeRegex(search), "i");
+    filter.$and = [
+      ...(filter.$and || []),
+      {
+        $or: [{ firstName: pattern }, { lastName: pattern }, { email: pattern }, { phone: pattern }],
+      },
+    ];
+  }
+
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .sort({ subscriptionStartedAt: -1, updatedAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    User.countDocuments(filter),
+  ]);
+
+  // Sync any drifted statuses in the current page
+  for (const user of users) {
+    await syncUserSubscriptionStatus(user);
+  }
+
+  const statusCounts = await User.aggregate([
+    { $match: { role: "user", subscriptionStatus: { $nin: ["none"] } } },
+    {
+      $group: {
+        _id: "$subscriptionStatus",
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+
+  const counts = {
+    active: 0,
+    expired: 0,
+    cancelled: 0,
+    pending_payment: 0,
+    trial: 0,
+  };
+  for (const row of statusCounts) {
+    if (Object.hasOwn(counts, row._id)) {
+      counts[row._id] = row.count;
+    }
+  }
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: users.map((user) => ({
+      ...toUserRow(user),
+      ...toSubscriptionSummary(user),
+    })),
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      counts,
+    },
+  });
+});
+
+export const syncAdminSubscriptions = catchAsync(async (req, res) => {
+  const result = await syncExpiredSubscriptions({ limit: Number(req.query.limit) || 1000 });
+  res.status(httpStatus.OK).json({
+    success: true,
+    message: "Subscription statuses synchronized.",
+    data: result,
+  });
+});
+
+export const getAdminSubscriptionHistory = catchAsync(async (req, res) => {
+  const page = parsePage(req.query.page);
+  const limit = parseLimit(req.query.limit, 20, 100);
+  const skip = (page - 1) * limit;
+  const filter = {};
+
+  if (req.query.userId && mongoose.isValidObjectId(req.query.userId)) {
+    filter.user = req.query.userId;
+  }
+
+  const [rows, total] = await Promise.all([
+    SubscriptionHistory.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("user", "firstName lastName email selectedPlan subscriptionStatus")
+      .populate("changedBy", "firstName email"),
+    SubscriptionHistory.countDocuments(filter),
+  ]);
+
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: rows,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    },
   });
 });
 
@@ -1438,10 +1641,12 @@ export const getAdminPremiumUsers = catchAsync(async (req, res) => {
       userType: "premium_user",
       assignedUser: { $in: userIds },
       isActive: true,
+      isTemplate: { $ne: true },
     }).select("_id assignedUser programName status"),
     NutritionPlan.find({
       assignedUser: { $in: userIds },
       isActive: true,
+      isTemplate: { $ne: true },
     }).select("_id assignedUser title status"),
   ]);
 
@@ -1506,12 +1711,14 @@ export const getAdminPremiumUserById = catchAsync(async (req, res) => {
       userType: "premium_user",
       assignedUser: user._id,
       isActive: true,
+      isTemplate: { $ne: true },
     })
       .sort({ updatedAt: -1 })
       .select("_id programName status programLevel durationMinutes weekCount workoutDays createdAt updatedAt"),
     NutritionPlan.find({
       assignedUser: user._id,
       isActive: true,
+      isTemplate: { $ne: true },
     })
       .sort({ updatedAt: -1 })
       .select("_id title description status nutritionDays createdAt updatedAt"),
