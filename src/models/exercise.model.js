@@ -20,6 +20,13 @@ const defaultSetSchema = new mongoose.Schema(
     reps: { type: Number, min: 0 },
     durationSeconds: { type: Number, min: 0 },
     weightKg: { type: Number, min: 0, default: 1 },
+    restSeconds: { type: Number, min: 0 },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [500, "Set notes should not exceed 500 characters"],
+    },
   },
   { _id: false }
 );

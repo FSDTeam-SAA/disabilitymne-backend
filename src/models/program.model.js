@@ -20,6 +20,13 @@ const setTemplateSchema = new mongoose.Schema(
     reps: { type: Number, min: 0 },
     weightKg: { type: Number, min: 0 },
     durationSeconds: { type: Number, min: 0 },
+    restSeconds: { type: Number, min: 0 },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [500, "Set notes should not exceed 500 characters"],
+    },
   },
   { _id: false }
 );
@@ -66,6 +73,13 @@ const exerciseSchema = new mongoose.Schema(
     defaultSets: {
       type: [setTemplateSchema],
       default: [],
+    },
+    restSeconds: { type: Number, min: 0 },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [500, "Exercise notes should not exceed 500 characters"],
     },
     durationSeconds: { type: Number, min: 0 },
     calories: { type: Number, min: 0 },
@@ -129,6 +143,18 @@ const programSchema = new mongoose.Schema(
     assignedUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
+      default: null,
+      index: true,
+    },
+    /** Reusable premium library template — not assigned to a specific user */
+    isTemplate: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    sourceTemplate: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Program",
       default: null,
       index: true,
     },
@@ -286,10 +312,14 @@ programSchema.pre("validate", function preValidate(next) {
 
   if (this.userType === "normal_user") {
     this.assignedUser = null;
+    this.isTemplate = false;
   }
 
-  if (this.userType === "premium_user" && !this.assignedUser) {
-    return next(new Error("assignedUser is required for premium_user programs."));
+  if (this.isTemplate) {
+    this.userType = "premium_user";
+    this.assignedUser = null;
+  } else if (this.userType === "premium_user" && !this.assignedUser) {
+    return next(new Error("assignedUser is required for premium_user programs (or set isTemplate=true)."));
   }
 
   next();
@@ -297,6 +327,7 @@ programSchema.pre("validate", function preValidate(next) {
 
 programSchema.index({ status: 1, isActive: 1, userType: 1, createdAt: -1 });
 programSchema.index({ assignedUser: 1, status: 1, isActive: 1, createdAt: -1 });
+programSchema.index({ isTemplate: 1, userType: 1, status: 1, isActive: 1, createdAt: -1 });
 programSchema.index({ exerciseRefs: 1, status: 1, isActive: 1 });
 programSchema.index({ "workoutDays.dayIndex": 1, status: 1, isActive: 1 });
 

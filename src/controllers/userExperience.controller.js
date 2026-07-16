@@ -168,6 +168,8 @@ const normalizeSetTemplatesForResponse = (rawSets) =>
         reps: Number.isFinite(Number(set.reps)) ? Number(set.reps) : undefined,
         durationSeconds: Number.isFinite(Number(set.durationSeconds)) ? Number(set.durationSeconds) : undefined,
         weightKg: Number.isFinite(Number(set.weightKg)) && Number(set.weightKg) >= 0 ? Number(set.weightKg) : 1,
+        restSeconds: Number.isFinite(Number(set.restSeconds)) && Number(set.restSeconds) >= 0 ? Number(set.restSeconds) : undefined,
+        notes: typeof set.notes === "string" ? set.notes.trim() : "",
       }))
     : [];
 
@@ -314,6 +316,8 @@ const parseSetTemplates = (rawValue, fieldName = "customSets") => {
       reps,
       durationSeconds,
       weightKg,
+      restSeconds: parseNumber(template.restSeconds ?? template.rest, `${fieldName}[${index}].restSeconds`, 0, false),
+      notes: asString(template.notes),
     };
   });
 };
@@ -403,7 +407,7 @@ const ensureExerciseAccessibleForUser = async (exerciseId, user) => {
   return exercise;
 };
 
-const toExerciseSettingsResponse = (exercise, customSets = []) => {
+const toExerciseSettingsResponse = (exercise, customSets = [], setting = null) => {
   const defaultSets = normalizeSetTemplatesForResponse(exercise.defaultSets);
   const normalizedCustomSets = normalizeSetTemplatesForResponse(customSets);
   const effectiveSets = normalizedCustomSets.length > 0 ? normalizedCustomSets : defaultSets;
@@ -426,6 +430,12 @@ const toExerciseSettingsResponse = (exercise, customSets = []) => {
     countdown: isCountdown,
     durationSeconds: isCountdown ? primarySet?.durationSeconds ?? null : null,
     weightKg: primarySet?.weightKg ?? 1,
+    restSeconds:
+      setting?.restSeconds ??
+      primarySet?.restSeconds ??
+      null,
+    notes: setting?.notes || primarySet?.notes || "",
+    order: setting?.order ?? null,
   };
 };
 
@@ -1423,11 +1433,13 @@ export const getMyExerciseSettings = catchAsync(async (req, res) => {
   }
 
   const exercise = await ensureExerciseAccessibleForUser(exerciseId, req.user);
-  const setting = await UserExerciseSetting.findOne({ user: req.user._id, exercise: exercise._id }).select("customSets");
+  const setting = await UserExerciseSetting.findOne({ user: req.user._id, exercise: exercise._id }).select(
+    "customSets restSeconds notes order"
+  );
 
   res.status(httpStatus.OK).json({
     success: true,
-    data: toExerciseSettingsResponse(exercise, setting?.customSets || []),
+    data: toExerciseSettingsResponse(exercise, setting?.customSets || [], setting),
   });
 });
 
@@ -1445,7 +1457,7 @@ export const upsertMyExerciseSettings = catchAsync(async (req, res) => {
     return res.status(httpStatus.OK).json({
       success: true,
       message: "Exercise settings reset to admin defaults.",
-      data: toExerciseSettingsResponse(exercise, []),
+      data: toExerciseSettingsResponse(exercise, [], null),
     });
   }
 
@@ -1459,15 +1471,22 @@ export const upsertMyExerciseSettings = catchAsync(async (req, res) => {
     return res.status(httpStatus.OK).json({
       success: true,
       message: "Exercise settings reset to admin defaults.",
-      data: toExerciseSettingsResponse(exercise, []),
+      data: toExerciseSettingsResponse(exercise, [], null),
     });
   }
+
+  const restSeconds = parseNumber(req.body?.restSeconds ?? req.body?.rest, "restSeconds", 0, false);
+  const notes = asString(req.body?.notes);
+  const order = parseNumber(req.body?.order, "order", 1, false);
 
   const setting = await UserExerciseSetting.findOneAndUpdate(
     { user: req.user._id, exercise: exercise._id },
     {
       $set: {
         customSets,
+        ...(restSeconds !== undefined ? { restSeconds } : {}),
+        ...(notes !== undefined ? { notes } : {}),
+        ...(order !== undefined ? { order } : {}),
       },
     },
     {
@@ -1481,7 +1500,7 @@ export const upsertMyExerciseSettings = catchAsync(async (req, res) => {
     success: true,
     message: "Exercise settings saved successfully.",
     data: {
-      ...toExerciseSettingsResponse(exercise, setting.customSets),
+      ...toExerciseSettingsResponse(exercise, setting.customSets, setting),
       updatedAt: setting.updatedAt,
     },
   });

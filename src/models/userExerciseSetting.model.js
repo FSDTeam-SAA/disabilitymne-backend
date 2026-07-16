@@ -6,6 +6,13 @@ const userExerciseSetSchema = new mongoose.Schema(
     reps: { type: Number, min: 0 },
     durationSeconds: { type: Number, min: 0 },
     weightKg: { type: Number, min: 0, default: 1 },
+    restSeconds: { type: Number, min: 0 },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [500, "Set notes should not exceed 500 characters"],
+    },
   },
   { _id: false }
 );
@@ -24,10 +31,20 @@ const userExerciseSettingSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    /** Admin-controlled defaults for this user+exercise assignment */
     customSets: {
       type: [userExerciseSetSchema],
       default: [],
     },
+    restSeconds: { type: Number, min: 0 },
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: [1000, "Exercise notes should not exceed 1000 characters"],
+    },
+    /** Weight is user-editable; admin sets sets/reps/order/rest/notes */
+    order: { type: Number, min: 1 },
   },
   { timestamps: true }
 );

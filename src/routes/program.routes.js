@@ -4,6 +4,8 @@ import { uploadImageFields } from "../middlewares/upload.js";
 import {
   createProgram,
   deleteAdminProgram,
+  duplicateAdminProgram,
+  assignProgramToPremiumUser,
   getAdminProgramById,
   getAdminPrograms,
   getAllAccessiblePrograms,
@@ -30,6 +32,8 @@ router.use(protect);
 
 adminRouter.get("/premium-users", listPremiumUsers);
 adminRouter.route("/").get(getAdminPrograms).post(uploadProgramImages, createProgram);
+adminRouter.post("/:programId/assign", assignProgramToPremiumUser);
+adminRouter.post("/:programId/duplicate", duplicateAdminProgram);
 adminRouter.route("/:programId").get(getAdminProgramById).patch(uploadProgramImages, updateAdminProgram).delete(deleteAdminProgram);
 
 router.use("/admin", restrictTo("admin"), adminRouter);
