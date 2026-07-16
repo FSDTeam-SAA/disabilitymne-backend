@@ -2,5 +2,7 @@ node_modules
 dist
 uploads
 logs
+keys
 .DS_Store
 .env
+*.p8

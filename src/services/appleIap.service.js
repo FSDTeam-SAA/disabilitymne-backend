@@ -1,3 +1,7 @@
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import jwt from "jsonwebtoken";
 import httpStatus from "http-status";
 import AppError from "../utils/AppError.js";
 import { Payment } from "../models/payment.model.js";
@@ -9,8 +13,13 @@ import { sendEmail } from "../services/email.service.js";
 import { buildPaymentReceiptEmail } from "../utils/emailTemplates.js";
 import { assertPremiumCapacityAvailable } from "./premiumCapacity.service.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const VERIFY_URL_PRODUCTION = "https://buy.itunes.apple.com/verifyReceipt";
 const VERIFY_URL_SANDBOX = "https://sandbox.itunes.apple.com/verifyReceipt";
+const STOREKIT_API_PRODUCTION = "https://api.storekit.itunes.apple.com";
+const STOREKIT_API_SANDBOX = "https://api.storekit-sandbox.itunes.apple.com";
 const EXPECTED_BUNDLE_ID = String(process.env.APPLE_BUNDLE_ID || "com.disability.disabilitymn").trim();
 
 const addMonths = (date, months) => {
@@ -19,18 +28,181 @@ const addMonths = (date, months) => {
   return d;
 };
 
-const assertSharedSecretConfigured = () => {
+const getSharedSecret = () => String(process.env.APPLE_IAP_SHARED_SECRET || "").trim();
+
+const getIssuerId = () => String(process.env.APPLE_IAP_ISSUER_ID || "").trim();
+const getKeyId = () => String(process.env.APPLE_IAP_KEY_ID || "").trim();
+
+const getPrivateKeyPem = () => {
+  const inline = String(process.env.APPLE_IAP_PRIVATE_KEY || "").trim();
+  if (inline) {
+    return inline.replace(/\\n/g, "\n");
+  }
+
+  const configuredPath = String(process.env.APPLE_IAP_PRIVATE_KEY_PATH || "").trim();
+  const resolvedPath = configuredPath
+    ? path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath)
+    : path.resolve(__dirname, "../../keys/SubscriptionKey_2C8SJG8F46.p8");
+
+  if (!fs.existsSync(resolvedPath)) {
+    return "";
+  }
+
+  return fs.readFileSync(resolvedPath, "utf8");
+};
+
+const hasAppStoreServerApiConfig = () => {
+  return Boolean(getIssuerId() && getKeyId() && getPrivateKeyPem());
+};
+
+const assertAppleIapConfigured = () => {
   if (process.env.NODE_ENV !== "production") {
     return;
   }
 
-  const sharedSecret = String(process.env.APPLE_IAP_SHARED_SECRET || "").trim();
-  if (!sharedSecret) {
+  if (hasAppStoreServerApiConfig() || getSharedSecret()) {
+    return;
+  }
+
+  throw new AppError(
+    "Apple IAP is not configured on the server. Set APPLE_IAP_SHARED_SECRET or App Store Server API keys.",
+    httpStatus.INTERNAL_SERVER_ERROR
+  );
+};
+
+const createAppStoreServerToken = () => {
+  const issuerId = getIssuerId();
+  const keyId = getKeyId();
+  const privateKey = getPrivateKeyPem();
+
+  if (!issuerId || !keyId || !privateKey) {
     throw new AppError(
-      "Apple IAP shared secret is not configured on the server.",
+      "Apple App Store Server API credentials are not configured.",
       httpStatus.INTERNAL_SERVER_ERROR
     );
   }
+
+  const now = Math.floor(Date.now() / 1000);
+  return jwt.sign(
+    {
+      iss: issuerId,
+      iat: now,
+      exp: now + 60 * 20,
+      aud: "appstoreconnect-v1",
+      bid: EXPECTED_BUNDLE_ID,
+    },
+    privateKey,
+    {
+      algorithm: "ES256",
+      header: {
+        alg: "ES256",
+        kid: keyId,
+        typ: "JWT",
+      },
+    }
+  );
+};
+
+const decodeJwsPayload = (jws) => {
+  const parts = String(jws || "").split(".");
+  if (parts.length < 2) {
+    return null;
+  }
+
+  try {
+    const json = Buffer.from(parts[1], "base64url").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+};
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 15000) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new AppError("Apple receipt verification timed out.", httpStatus.GATEWAY_TIMEOUT);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const fetchTransactionFromStoreKit = async (transactionId, baseUrl) => {
+  const token = createAppStoreServerToken();
+  const response = await fetchWithTimeout(
+    `${baseUrl}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    }
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    throw new AppError(
+      `Unable to verify Apple transaction (${response.status}). ${bodyText}`.trim(),
+      httpStatus.BAD_GATEWAY
+    );
+  }
+
+  const payload = await response.json();
+  const transaction = decodeJwsPayload(payload.signedTransactionInfo);
+  if (!transaction) {
+    throw new AppError("Apple transaction payload could not be decoded.", httpStatus.BAD_GATEWAY);
+  }
+
+  return transaction;
+};
+
+const verifyWithAppStoreServerApi = async (transactionId) => {
+  assertAppleIapConfigured();
+
+  if (!hasAppStoreServerApiConfig()) {
+    return null;
+  }
+
+  const normalizedId = String(transactionId || "").trim();
+  if (!normalizedId) {
+    return null;
+  }
+
+  let transaction = await fetchTransactionFromStoreKit(normalizedId, STOREKIT_API_PRODUCTION);
+  if (!transaction) {
+    transaction = await fetchTransactionFromStoreKit(normalizedId, STOREKIT_API_SANDBOX);
+  }
+
+  if (!transaction) {
+    throw new AppError("No matching Apple transaction was found.", httpStatus.BAD_REQUEST);
+  }
+
+  const bundleId = String(transaction.bundleId || "").trim();
+  if (EXPECTED_BUNDLE_ID && bundleId && bundleId !== EXPECTED_BUNDLE_ID) {
+    throw new AppError("Apple receipt bundle id does not match this app.", httpStatus.BAD_REQUEST);
+  }
+
+  return {
+    product_id: transaction.productId,
+    transaction_id: transaction.transactionId,
+    original_transaction_id: transaction.originalTransactionId,
+    purchase_date_ms: transaction.purchaseDate,
+    expires_date_ms: transaction.expiresDate,
+    environment: transaction.environment,
+  };
 };
 
 const validateBundleId = (receiptResult) => {
@@ -97,9 +269,16 @@ const sendPaymentReceipt = async ({ payment, user }) => {
 };
 
 const postVerifyReceipt = async (url, receiptData) => {
-  assertSharedSecretConfigured();
+  assertAppleIapConfigured();
 
-  const sharedSecret = String(process.env.APPLE_IAP_SHARED_SECRET || "").trim();
+  const sharedSecret = getSharedSecret();
+  if (!sharedSecret && process.env.NODE_ENV === "production" && !hasAppStoreServerApiConfig()) {
+    throw new AppError(
+      "Apple IAP shared secret is not configured on the server.",
+      httpStatus.INTERNAL_SERVER_ERROR
+    );
+  }
+
   const body = {
     "receipt-data": receiptData,
     "exclude-old-transactions": true,
@@ -109,30 +288,17 @@ const postVerifyReceipt = async (url, receiptData) => {
     body.password = sharedSecret;
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new AppError("Unable to verify Apple receipt.", httpStatus.BAD_GATEWAY);
-    }
-
-    return response.json();
-  } catch (error) {
-    if (error.name === "AbortError") {
-      throw new AppError("Apple receipt verification timed out.", httpStatus.GATEWAY_TIMEOUT);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    throw new AppError("Unable to verify Apple receipt.", httpStatus.BAD_GATEWAY);
   }
+
+  return response.json();
 };
 
 export const verifyAppleReceipt = async (receiptData) => {
@@ -188,6 +354,45 @@ const resolveSubscriptionEndsAt = (latestItem, plan, paidAt) => {
   return addMonths(paidAt, plan.durationMonths || 1);
 };
 
+const resolveLatestItem = async ({
+  receiptData,
+  transactionId,
+  expectedProductId,
+  normalizedProductId,
+}) => {
+  // Prefer App Store Server API (Issuer ID + Key ID + .p8) when transaction id is available.
+  if (transactionId && hasAppStoreServerApiConfig()) {
+    try {
+      const item = await verifyWithAppStoreServerApi(transactionId);
+      if (item) {
+        return item;
+      }
+    } catch (error) {
+      console.error(`[apple-iap] App Store Server API verify failed: ${error.message}`);
+      // Fall through to classic verifyReceipt when possible.
+      if (!receiptData) {
+        throw error;
+      }
+    }
+  }
+
+  if (!receiptData) {
+    throw new AppError("Apple receipt data is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const receiptResult = await verifyAppleReceipt(receiptData);
+  const latestItem = pickLatestSubscription(
+    receiptResult,
+    expectedProductId || normalizedProductId
+  );
+
+  if (!latestItem) {
+    throw new AppError("No matching Apple subscription was found in the receipt.", httpStatus.BAD_REQUEST);
+  }
+
+  return latestItem;
+};
+
 export const processApplePurchase = async ({
   userId,
   receiptData,
@@ -210,15 +415,12 @@ export const processApplePurchase = async ({
 
   const expectedProductId = normalizedProductId || PLAN_TO_APPLE_PRODUCT[resolvedPlanKey] || "";
 
-  const receiptResult = await verifyAppleReceipt(receiptData);
-  const latestItem = pickLatestSubscription(
-    receiptResult,
-    expectedProductId || normalizedProductId
-  );
-
-  if (!latestItem) {
-    throw new AppError("No matching Apple subscription was found in the receipt.", httpStatus.BAD_REQUEST);
-  }
+  const latestItem = await resolveLatestItem({
+    receiptData,
+    transactionId,
+    expectedProductId,
+    normalizedProductId,
+  });
 
   if (!isSubscriptionActive(latestItem)) {
     throw new AppError("Apple subscription has expired.", httpStatus.BAD_REQUEST);
@@ -278,6 +480,7 @@ export const processApplePurchase = async ({
       productId: latestItem.product_id || normalizedProductId,
       originalTransactionId: latestItem.original_transaction_id || "",
       expiresDateMs: latestItem.expires_date_ms || "",
+      verificationMethod: latestItem.environment ? "app_store_server_api" : "verify_receipt",
     },
   });
 
