@@ -651,8 +651,12 @@ const buildCreatePayload = async (body) => {
   let assignedUser = null;
   if (userType === "premium_user") {
     const assignedInput = getField(parsedBody, ["assignedUser", "assignedUserId", "targetUserId", "userId"]).value;
-    const premiumUser = await ensurePremiumUserAssignable(assignedInput);
-    assignedUser = premiumUser._id;
+    // assignedUser is optional: premium recipes without one are private
+    // admin-only library recipes (never visible to regular users).
+    if (assignedInput) {
+      const premiumUser = await ensurePremiumUserAssignable(assignedInput);
+      assignedUser = premiumUser._id;
+    }
   }
 
   return {
@@ -726,9 +730,12 @@ const buildUpdatePayload = async (body, currentRecipe) => {
 
     if (nextUserType === "normal_user") {
       nextAssignedUser = null;
-    } else {
+    } else if (nextAssignedUser) {
       const premiumUser = await ensurePremiumUserAssignable(nextAssignedUser);
       nextAssignedUser = premiumUser._id;
+    } else {
+      // Private admin-only premium library recipe (no assigned user).
+      nextAssignedUser = null;
     }
 
     updates.userType = nextUserType;
@@ -895,7 +902,7 @@ export const getAdminRecipes = catchAsync(async (req, res) => {
 
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
-    filter.$or = [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: { $elemMatch: pattern } }];
+    filter.$or = [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: pattern }];
   }
 
   const [recipes, total] = await Promise.all([
@@ -1044,7 +1051,7 @@ export const getExploreRecipes = catchAsync(async (req, res) => {
 
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
-    filter.$or = [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: { $elemMatch: pattern } }];
+    filter.$or = [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: pattern }];
   }
 
   const [recipes, total] = await Promise.all([
@@ -1086,7 +1093,7 @@ export const getMyRecipes = catchAsync(async (req, res) => {
 
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
-    filter.$or = [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: { $elemMatch: pattern } }];
+    filter.$or = [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: pattern }];
   }
 
   const [recipes, total] = await Promise.all([
@@ -1160,7 +1167,7 @@ export const getAllAccessibleRecipes = catchAsync(async (req, res) => {
 
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
-    filter.$and = [{ $or: [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: { $elemMatch: pattern } }] }];
+    filter.$and = [{ $or: [{ recipeName: pattern }, { howToPrepare: pattern }, { ingredients: pattern }] }];
   }
 
   const [recipes, total] = await Promise.all([
@@ -1200,7 +1207,7 @@ export const getPublicRecipes = catchAsync(async (req, res) => {
     filter.$or = [
       { recipeName: pattern },
       { howToPrepare: pattern },
-      { ingredients: { $elemMatch: pattern } },
+      { ingredients: pattern },
     ];
   }
 

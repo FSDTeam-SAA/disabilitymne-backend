@@ -125,9 +125,8 @@ recipeSchema.pre("validate", function preValidate(next) {
     this.assignedUser = null;
   }
 
-  if (this.userType === "premium_user" && !this.assignedUser) {
-    return next(new Error("assignedUser is required for premium_user recipes."));
-  }
+  // premium_user recipes without an assignedUser are private admin-only
+  // library recipes: never visible to regular users, assignable later.
 
   if (!Array.isArray(this.recipeImages) || this.recipeImages.length === 0) {
     return next(new Error("At least one recipe image is required."));
