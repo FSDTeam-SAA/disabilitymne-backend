@@ -20,7 +20,7 @@ export const SUBSCRIPTION_PLANS = Object.freeze([
   {
     key: "annual",
     name: "Annual Plan",
-    price: 144,
+    price: 13.99,
     currency: "USD",
     durationMonths: 12,
     trialDays: 0,
@@ -29,7 +29,7 @@ export const SUBSCRIPTION_PLANS = Object.freeze([
   {
     key: "premium",
     name: "Premium Plan",
-    price: 150,
+    price: 199.99,
     currency: "USD",
     durationMonths: 1,
     trialDays: 0,
