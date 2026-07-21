@@ -27,7 +27,6 @@ import {
   updateAdminSettingsPassword,
   updateAdminSettingsProfile,
   updateAdminSubscriptionPlan,
-  updateAdminUserRole,
   updateAdminUserStatus,
 } from "../controllers/admin.controller.js";
 
@@ -45,7 +44,6 @@ router.get("/dashboard/overview", getDashboardOverview);
 router.get("/users", getAdminUsers);
 router.post("/users", createAdminUser);
 router.patch("/users/:userId/status", updateAdminUserStatus);
-router.patch("/users/:userId/role", updateAdminUserRole);
 router.delete("/users/:userId", deleteAdminUser);
 
 router.get("/premium-users", getAdminPremiumUsers);

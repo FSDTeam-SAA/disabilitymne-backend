@@ -181,9 +181,23 @@ const verifyWithAppStoreServerApi = async (transactionId) => {
     return null;
   }
 
-  let transaction = await fetchTransactionFromStoreKit(normalizedId, STOREKIT_API_PRODUCTION);
+  // Production rejects apps that are not live on the App Store yet (401),
+  // so any production failure must still fall through to the sandbox API.
+  let transaction = null;
+  let productionError = null;
+  try {
+    transaction = await fetchTransactionFromStoreKit(normalizedId, STOREKIT_API_PRODUCTION);
+  } catch (error) {
+    productionError = error;
+    console.error(`[apple-iap] Production StoreKit lookup failed, trying sandbox: ${error.message}`);
+  }
+
   if (!transaction) {
-    transaction = await fetchTransactionFromStoreKit(normalizedId, STOREKIT_API_SANDBOX);
+    try {
+      transaction = await fetchTransactionFromStoreKit(normalizedId, STOREKIT_API_SANDBOX);
+    } catch (sandboxError) {
+      throw productionError || sandboxError;
+    }
   }
 
   if (!transaction) {

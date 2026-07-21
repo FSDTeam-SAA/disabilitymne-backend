@@ -38,7 +38,6 @@ import { deleteAllUserData } from "../services/userDeletion.service.js";
 import { SubscriptionHistory } from "../models/subscriptionHistory.model.js";
 
 const ACCOUNT_STATUSES = new Set(["active", "deactivated", "suspended"]);
-const USER_ROLES = new Set(["user", "admin"]);
 const SUPPORT_TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
 const WORKOUT_EXPERIENCE_LEVELS = new Set(["easy", "intermediate", "very_hard"]);
 const PROFILE_IMAGE_FIELDS = ["profileImage", "avatar", "image"];
@@ -203,15 +202,6 @@ const normalizeAccountStatus = (value) => {
   }
 
   return status;
-};
-
-const normalizeRole = (value) => {
-  const role = asString(value).toLowerCase();
-  if (!USER_ROLES.has(role)) {
-    throw new AppError("role must be one of: user, admin.", httpStatus.BAD_REQUEST);
-  }
-
-  return role;
 };
 
 const normalizeProfileImage = (value) => {
@@ -910,7 +900,17 @@ export const getAdminWorkoutProgress = catchAsync(async (req, res) => {
     logFilter.exercise = parseObjectId(req.query.exerciseId, "exerciseId");
   }
 
-  const [sessions, logs, total, strengthRows] = await Promise.all([
+  const { NutritionEntry } = await import("../models/nutritionEntry.model.js");
+
+  const nutritionFilter = {};
+  if (req.query.userId) {
+    nutritionFilter.user = parseObjectId(req.query.userId, "userId");
+  }
+  if (Object.keys(completedAtFilter).length > 0) {
+    nutritionFilter.entryDate = completedAtFilter;
+  }
+
+  const [sessions, logs, total, strengthRows, nutritionRows] = await Promise.all([
     WorkoutSession.find(sessionFilter)
       .select("weekStartDate totals scheduledExercises completedExercises completedAt")
       .lean(),
@@ -956,6 +956,28 @@ export const getAdminWorkoutProgress = catchAsync(async (req, res) => {
       },
       { $sort: { "_id.weekStartDate": 1, exerciseName: 1 } },
     ]),
+    NutritionEntry.aggregate([
+      { $match: nutritionFilter },
+      {
+        $group: {
+          _id: {
+            year: { $isoWeekYear: "$entryDate" },
+            week: { $isoWeek: "$entryDate" },
+          },
+          weekStartDate: {
+            $min: {
+              $dateFromParts: {
+                isoWeekYear: { $isoWeekYear: "$entryDate" },
+                isoWeek: { $isoWeek: "$entryDate" },
+                isoDayOfWeek: 1,
+              },
+            },
+          },
+          daysWithEntries: { $addToSet: { $dateToString: { format: "%Y-%m-%d", date: "$entryDate" } } },
+        },
+      },
+      { $sort: { weekStartDate: 1 } },
+    ]),
   ]);
 
   const adherenceByWeekMap = new Map();
@@ -994,6 +1016,16 @@ export const getAdminWorkoutProgress = catchAsync(async (req, res) => {
     totalVolume: Number(Number(row.totalVolume || 0).toFixed(2)),
   }));
 
+  const nutritionAdherenceByWeek = nutritionRows.map((row) => {
+    const daysLogged = Array.isArray(row.daysWithEntries) ? row.daysWithEntries.length : 0;
+    const adherencePercent = Number(((daysLogged / 7) * 100).toFixed(2));
+    return {
+      weekStartDate: toYmd(row.weekStartDate) || null,
+      daysLogged,
+      adherencePercent,
+    };
+  });
+
   const totalScheduledExercises = adherenceByWeek.reduce((sum, row) => sum + Number(row.scheduledExercises || 0), 0);
   const totalCompletedExercises = adherenceByWeek.reduce((sum, row) => sum + Number(row.completedExercises || 0), 0);
   const totalTrainingVolume = strengthTrend.reduce((sum, row) => sum + Number(row.totalVolume || 0), 0);
@@ -1013,6 +1045,7 @@ export const getAdminWorkoutProgress = catchAsync(async (req, res) => {
       series: {
         adherenceByWeek,
         strengthTrend,
+        nutritionAdherenceByWeek,
       },
       recentLogs: logs.map(toAdminWorkoutProgressLogRow),
     },
@@ -1121,35 +1154,6 @@ export const updateAdminUserStatus = catchAsync(async (req, res) => {
   res.status(httpStatus.OK).json({
     success: true,
     message: "User status updated successfully.",
-    data: toUserRow(user),
-  });
-});
-
-export const updateAdminUserRole = catchAsync(async (req, res) => {
-  const { userId } = req.params;
-
-  if (!mongoose.isValidObjectId(userId)) {
-    throw new AppError("Invalid user id.", httpStatus.BAD_REQUEST);
-  }
-
-  if (userId === req.user._id.toString()) {
-    throw new AppError("You cannot change your own role.", httpStatus.BAD_REQUEST);
-  }
-
-  const role = normalizeRole(req.body.role);
-
-  const user = await User.findById(userId).select("+refreshTokenHash +refreshTokenExpiresAt");
-  if (!user) {
-    throw new AppError("User not found.", httpStatus.NOT_FOUND);
-  }
-
-  user.role = role;
-  user.clearRefreshToken();
-  await user.save({ validateBeforeSave: false });
-
-  res.status(httpStatus.OK).json({
-    success: true,
-    message: "User role updated successfully.",
     data: toUserRow(user),
   });
 });
