@@ -419,6 +419,10 @@ export const getAdminNutritionPlans = catchAsync(async (req, res) => {
   }
   if (Object.hasOwn(req.query, "isActive")) {
     filter.isActive = req.query.isActive === true || req.query.isActive === "true";
+  } else if (!req.query.status) {
+    // Hide soft-deleted / archived plans from the admin library by default.
+    filter.isActive = true;
+    filter.status = { $ne: "archived" };
   }
   if (req.query.search) {
     const pattern = new RegExp(escapeRegex(asString(req.query.search)), "i");
@@ -490,10 +494,8 @@ export const deleteAdminNutritionPlan = catchAsync(async (req, res) => {
     throw new AppError("Nutrition plan not found.", httpStatus.NOT_FOUND);
   }
 
-  plan.isActive = false;
-  plan.status = "archived";
-  plan.updatedBy = req.user._id;
-  await plan.save();
+  // Hard-delete the plan document. Assigned user copies are separate docs and are unaffected.
+  await NutritionPlan.deleteOne({ _id: plan._id });
 
   res.status(httpStatus.OK).json({
     success: true,
