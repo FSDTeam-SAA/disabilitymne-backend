@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
+import { requireActiveSubscription } from "../middlewares/requireActiveSubscription.js";
 import {
   createNutritionPlan,
   deleteAdminNutritionPlan,
@@ -29,6 +30,7 @@ adminRouter
   .delete(deleteAdminNutritionPlan);
 
 router.use("/admin", restrictTo("admin"), adminRouter);
+router.use(requireActiveSubscription);
 
 router.get("/my", getMyNutritionPlans);
 router.get("/:planId", getNutritionPlanByIdForUser);

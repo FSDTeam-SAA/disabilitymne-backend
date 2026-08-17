@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect } from "../middlewares/auth.js";
+import { requireActiveSubscription } from "../middlewares/requireActiveSubscription.js";
 import {
   calculateMacroTargets,
   createNutritionDiaryEntry,
@@ -20,6 +21,7 @@ import {
 const router = Router();
 
 router.use(protect);
+router.use(requireActiveSubscription);
 
 router.post("/calculator/macro-targets", calculateMacroTargets);
 router.get("/foods/search", searchFoods);

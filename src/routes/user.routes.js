@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect } from "../middlewares/auth.js";
+import { requireActiveSubscription } from "../middlewares/requireActiveSubscription.js";
 import { uploadImageFields } from "../middlewares/upload.js";
 import { getMe, selectPlan, updateMe, updateMyProfileImage, deleteMyAccount } from "../controllers/user.controller.js";
 import {
@@ -39,14 +40,28 @@ const uploadProfileImage = uploadImageFields([
 
 router.use(protect);
 
+// Always available without an active subscription (paywall / account management).
 router.get("/me", getMe);
 router.delete("/me", deleteMyAccount);
 router.patch("/me", uploadProfileImage, updateMe);
 router.patch("/me/onboarding", uploadProfileImage, updateMe);
 router.patch("/me/profile-image", uploadProfileImage, updateMyProfileImage);
 router.post("/me/select-plan", selectPlan);
-router.get("/me/home", getHomeOverview);
 router.get("/me/profile", getMyPublicProfile);
+router.get("/me/notifications", getNotificationList);
+router.patch("/me/notifications/read-all", markAllNotificationsRead);
+router.patch("/me/notifications/:notificationId/read", markNotificationRead);
+router.get("/me/language", getLanguagePreference);
+router.patch("/me/language", updateLanguagePreference);
+router.get("/me/accessibility", getAccessibilityPreferences);
+router.patch("/me/accessibility", updateAccessibilityPreferences);
+router.post("/me/support/tickets", createSupportTicket);
+router.get("/me/support/tickets", getMySupportTickets);
+router.post("/me/change-password", changeMyPassword);
+
+// App content — requires active Disability Fitness Membership.
+router.use(requireActiveSubscription);
+router.get("/me/home", getHomeOverview);
 router.get("/me/progress", getProgressOverview);
 router.get("/me/daily-tracker", getDailyTracker);
 router.get("/me/daily-tracker/notes", getMyDailyTrackerNotes);
@@ -60,15 +75,5 @@ router.put("/me/exercises/:exerciseId/settings", upsertMyExerciseSettings);
 router.delete("/me/exercises/:exerciseId/settings", resetMyExerciseSettings);
 router.post("/me/workouts/experiences", createWorkoutExperience);
 router.get("/me/workouts/experiences", getMyWorkoutExperiences);
-router.get("/me/notifications", getNotificationList);
-router.patch("/me/notifications/read-all", markAllNotificationsRead);
-router.patch("/me/notifications/:notificationId/read", markNotificationRead);
-router.get("/me/language", getLanguagePreference);
-router.patch("/me/language", updateLanguagePreference);
-router.get("/me/accessibility", getAccessibilityPreferences);
-router.patch("/me/accessibility", updateAccessibilityPreferences);
-router.post("/me/support/tickets", createSupportTicket);
-router.get("/me/support/tickets", getMySupportTickets);
-router.post("/me/change-password", changeMyPassword);
 
 export default router;

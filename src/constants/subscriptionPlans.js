@@ -1,8 +1,9 @@
+/** Canonical plan catalog — prices are always USD for the global app. */
 export const SUBSCRIPTION_PLANS = Object.freeze([
   {
     key: "monthly",
     name: "Monthly Plan",
-    price: 29.99,
+    price: 25,
     currency: "USD",
     durationMonths: 1,
     trialDays: 0,
@@ -11,7 +12,7 @@ export const SUBSCRIPTION_PLANS = Object.freeze([
   {
     key: "quarterly",
     name: "Quarterly Plan",
-    price: 149.99,
+    price: 60,
     currency: "USD",
     durationMonths: 3,
     trialDays: 0,
@@ -20,7 +21,7 @@ export const SUBSCRIPTION_PLANS = Object.freeze([
   {
     key: "annual",
     name: "Annual Plan",
-    price: 13.99,
+    price: 144,
     currency: "USD",
     durationMonths: 12,
     trialDays: 0,

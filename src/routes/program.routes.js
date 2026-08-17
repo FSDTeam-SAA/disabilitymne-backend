@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
+import { requireActiveSubscription } from "../middlewares/requireActiveSubscription.js";
 import { uploadImageFields } from "../middlewares/upload.js";
 import {
   createProgram,
@@ -37,6 +38,7 @@ adminRouter.post("/:programId/duplicate", duplicateAdminProgram);
 adminRouter.route("/:programId").get(getAdminProgramById).patch(uploadProgramImages, updateAdminProgram).delete(deleteAdminProgram);
 
 router.use("/admin", restrictTo("admin"), adminRouter);
+router.use(requireActiveSubscription);
 
 router.get("/explore", getExplorePrograms);
 router.get("/my", getMyPrograms);

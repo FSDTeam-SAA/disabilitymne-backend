@@ -79,8 +79,47 @@ export const ensureDefaultPlansIfEmpty = async () => {
   }
 };
 
-export const getActivePlans = async () => {
+/**
+ * Keep DB plan prices/currency aligned with the canonical USD catalog so the
+ * app never drifts into EUR (or stale amounts) after admin/seed changes.
+ */
+export const syncCanonicalPlanPricing = async () => {
   await ensureDefaultPlansIfEmpty();
+
+  for (let index = 0; index < SUBSCRIPTION_PLANS.length; index += 1) {
+    const plan = SUBSCRIPTION_PLANS[index];
+    const variants = getPlanKeyVariants(plan.key);
+
+    await SubscriptionPlan.updateMany(
+      { key: { $in: variants }, isActive: true },
+      {
+        $set: {
+          name: plan.name,
+          price: plan.price,
+          currency: "USD",
+          durationMonths: plan.durationMonths || 0,
+          durationLabel: getDefaultDurationLabel(plan),
+          trialDays: plan.trialDays || 0,
+          features: plan.features || [],
+          isPopular: plan.key === "premium",
+          sortOrder: index + 1,
+        },
+      }
+    );
+  }
+};
+
+const withForcedUsd = (plan) => {
+  if (!plan) return plan;
+  return {
+    ...plan,
+    currency: "USD",
+    price: Number(plan.price) || 0,
+  };
+};
+
+export const getActivePlans = async () => {
+  await syncCanonicalPlanPricing();
   const plans = await SubscriptionPlan.find({ isActive: true }).sort({ sortOrder: 1, createdAt: 1 });
   const normalizedByKey = new Map();
 
@@ -94,7 +133,7 @@ export const getActivePlans = async () => {
     if (!existing || (!existing.isCanonicalDoc && isCanonicalDoc)) {
       normalizedByKey.set(normalizedKey, {
         isCanonicalDoc,
-        plan: normalizePlan(planDoc),
+        plan: withForcedUsd(normalizePlan(planDoc)),
       });
     }
   }
@@ -103,7 +142,7 @@ export const getActivePlans = async () => {
 };
 
 export const getPlanByKey = async (planKey) => {
-  await ensureDefaultPlansIfEmpty();
+  await syncCanonicalPlanPricing();
   const normalizedKey = normalizePlanKey(planKey);
   if (!normalizedKey) return null;
 
@@ -118,5 +157,5 @@ export const getPlanByKey = async (planKey) => {
   const canonicalDoc =
     planDocs.find((planDoc) => String(planDoc.key || "").toLowerCase() === normalizedKey) || planDocs[0];
 
-  return normalizePlan(canonicalDoc);
+  return withForcedUsd(normalizePlan(canonicalDoc));
 };

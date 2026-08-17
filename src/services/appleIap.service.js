@@ -245,7 +245,7 @@ const resolvePlanForActivation = async (planKey) => {
   return getStaticPlanByKey(planKey) || null;
 };
 
-const activateUserPlan = (user, plan, startedAt = new Date(), subscriptionEndsAt = null) => {
+const activateUserPlan = (user, plan, startedAt = new Date(), subscriptionEndsAt = null, appleMeta = {}) => {
   const now = new Date(startedAt);
   user.selectedPlan = plan.key;
   user.subscriptionStartedAt = now;
@@ -254,6 +254,11 @@ const activateUserPlan = (user, plan, startedAt = new Date(), subscriptionEndsAt
   user.trialEndsAt = null;
   user.subscriptionEndsAt =
     subscriptionEndsAt || addMonths(now, plan.durationMonths || 1);
+
+  const originalTransactionId = String(appleMeta.originalTransactionId || "").trim();
+  if (originalTransactionId) {
+    user.appleOriginalTransactionId = originalTransactionId;
+  }
 };
 
 const sendPaymentReceipt = async ({ payment, user }) => {
@@ -474,7 +479,9 @@ export const processApplePurchase = async ({
       );
     }
 
-    activateUserPlan(user, plan, paidAt, subscriptionEndsAt);
+    activateUserPlan(user, plan, paidAt, subscriptionEndsAt, {
+      originalTransactionId: latestItem.original_transaction_id,
+    });
     await user.save({ validateBeforeSave: false });
     return { payment: existingPayment, user, alreadyProcessed: true };
   }
@@ -498,7 +505,9 @@ export const processApplePurchase = async ({
     },
   });
 
-  activateUserPlan(user, plan, payment.paidAt, subscriptionEndsAt);
+  activateUserPlan(user, plan, payment.paidAt, subscriptionEndsAt, {
+    originalTransactionId: latestItem.original_transaction_id,
+  });
   await user.save({ validateBeforeSave: false });
   await sendPaymentReceipt({ payment, user });
 

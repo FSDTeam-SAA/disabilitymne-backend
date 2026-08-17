@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
+import { requireActiveSubscription } from "../middlewares/requireActiveSubscription.js";
 import { uploadImageFields } from "../middlewares/upload.js";
 import {
   createRecipe,
@@ -36,6 +37,7 @@ adminRouter.route("/").get(getAdminRecipes).post(uploadRecipeImages, createRecip
 adminRouter.route("/:recipeId").get(getAdminRecipeById).patch(uploadRecipeImages, updateAdminRecipe).delete(deleteAdminRecipe);
 
 router.use("/admin", restrictTo("admin"), adminRouter);
+router.use(requireActiveSubscription);
 
 router.get("/explore", getExploreRecipes);
 router.get("/my", getMyRecipes);

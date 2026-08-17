@@ -4,6 +4,9 @@ import { deriveSubscriptionStatus } from "../services/subscriptionSync.service.j
 export const isSubscriptionCurrentlyActive = (user) => {
   if (!user) return false;
 
+  // Admin-granted complimentary access
+  if (user.isSponsored) return true;
+
   const status = deriveSubscriptionStatus(user);
   if (status === "active" || status === "trial") {
     return true;

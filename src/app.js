@@ -23,6 +23,7 @@ import nutritionRoutes from "./routes/nutrition.routes.js";
 import foodRoutes from "./routes/food.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import nutritionPlanRoutes from "./routes/nutritionPlan.routes.js";
+import homeBannerRoutes from "./routes/homeBanner.routes.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -79,6 +80,7 @@ app.use("/api/v1/recipes", recipeRoutes);
 app.use("/api/v1/chat", chatRoutes);
 app.use("/api/v1/nutrition", nutritionRoutes);
 app.use("/api/v1/nutrition-plans", nutritionPlanRoutes);
+app.use("/api/v1/home-banners", homeBannerRoutes);
 app.use("/api/food", foodRoutes);
 app.use("/api/v1/admin", adminRoutes);
 

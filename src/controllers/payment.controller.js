@@ -12,6 +12,7 @@ import { sendEmail } from "../services/email.service.js";
 import { buildPaymentReceiptEmail } from "../utils/emailTemplates.js";
 import { serializeUser } from "../utils/serializeUser.js";
 import { processApplePurchase, processAppleRestore } from "../services/appleIap.service.js";
+import { processAppleServerNotification } from "../services/appleNotification.service.js";
 import {
   assertPremiumCapacityAvailable,
   getPremiumCapacitySnapshot,
@@ -410,7 +411,7 @@ export const checkout = catchAsync(async (req, res) => {
   const stripe = getStripeClient();
   const successUrl = withCheckoutSessionPlaceholder(resolveRedirectUrl("success"));
   const cancelUrl = resolveRedirectUrl("cancel");
-  const currency = String(plan.currency || "USD").toLowerCase();
+  const currency = "usd";
   const amountMinor = toMinorUnits(plan.price, currency);
 
   const payment = await Payment.create({
@@ -418,7 +419,7 @@ export const checkout = catchAsync(async (req, res) => {
     planKey: plan.key,
     planName: plan.name,
     amount: plan.price,
-    currency: String(plan.currency || "USD").toUpperCase(),
+    currency: "USD",
     status: "pending",
     paymentMethod: "card",
     provider: "stripe",
@@ -704,5 +705,19 @@ export const restoreApplePurchases = catchAsync(async (req, res) => {
       payment: buildPaymentResponse(payment),
       user: serializeUser(user),
     },
+  });
+});
+
+/** App Store Server Notifications V2 (no auth — Apple calls this). */
+export const appleServerNotification = catchAsync(async (req, res) => {
+  const signedPayload = String(req.body?.signedPayload || "").trim();
+  if (!signedPayload) {
+    throw new AppError("signedPayload is required.", httpStatus.BAD_REQUEST);
+  }
+
+  const result = await processAppleServerNotification(signedPayload);
+  res.status(httpStatus.OK).json({
+    success: true,
+    data: result,
   });
 });

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { protect, restrictTo } from "../middlewares/auth.js";
+import { requireActiveSubscription } from "../middlewares/requireActiveSubscription.js";
 import { uploadMediaFields } from "../middlewares/upload.js";
 import {
   createExercise,
@@ -40,6 +41,7 @@ adminRouter.patch("/:exerciseId/visibility", updateExerciseVisibility);
 adminRouter.route("/:exerciseId").get(getAdminExerciseById).patch(uploadExerciseMedia, updateAdminExercise).delete(deleteAdminExercise);
 
 router.use("/admin", restrictTo("admin"), adminRouter);
+router.use(requireActiveSubscription);
 
 router.get("/library", getPublicExerciseLibrary);
 router.get("/my", getMyPrivateExercises);

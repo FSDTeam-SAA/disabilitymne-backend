@@ -10,6 +10,7 @@ import {
   checkoutCancelPage,
   verifyApplePurchase,
   restoreApplePurchases,
+  appleServerNotification,
 } from "../controllers/payment.controller.js";
 import { protect } from "../middlewares/auth.js";
 
@@ -18,6 +19,7 @@ const router = Router();
 router.get("/plans", getPlans);
 router.get("/premium-availability", getPremiumAvailability);
 router.post("/webhook", stripeWebhook);
+router.post("/apple/notifications", appleServerNotification);
 router.get("/checkout/success", checkoutSuccessPage);
 router.get("/checkout/cancel", checkoutCancelPage);
 router.use(protect);

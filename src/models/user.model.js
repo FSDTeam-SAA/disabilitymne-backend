@@ -471,6 +471,12 @@ const userSchema = new mongoose.Schema(
     trialEndsAt: Date,
     subscriptionStartedAt: Date,
     subscriptionEndsAt: Date,
+    /** Links App Store Server Notifications V2 renewals/expiries to this user. */
+    appleOriginalTransactionId: {
+      type: String,
+      default: null,
+      index: true,
+    },
 
     passwordResetOtpHash: {
       type: String,

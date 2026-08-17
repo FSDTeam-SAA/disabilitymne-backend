@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "migrate:program-workout-days": "node scripts/migrateProgramWorkoutDays.js",
     "migrate:plan-keys": "node scripts/migrateSubscriptionPlanKeys.js",
-    "migrate:premium-libraries": "node scripts/migratePremiumProgramLibraries.js"
+    "migrate:premium-libraries": "node scripts/migratePremiumProgramLibraries.js",
+    "seed:home-banner": "node scripts/seedDefaultHomeBanner.js"
   },
   "keywords": [
     "express",
