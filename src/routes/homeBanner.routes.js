@@ -22,7 +22,7 @@ adminRouter.route("/").get(getAdminHomeBanners).post(uploadHomeBannerImages, cre
 adminRouter.patch("/reorder", reorderHomeBanners);
 adminRouter.route("/:bannerId").patch(updateHomeBanner).delete(deleteHomeBanner);
 
-router.get("/", protect, getHomeBanners);
+router.get("/", getHomeBanners);
 router.use("/admin", protect, restrictTo("admin"), adminRouter);
 
 export default router;
