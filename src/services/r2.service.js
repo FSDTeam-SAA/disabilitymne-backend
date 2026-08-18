@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { cleanupProcessedVideoFile, stripAudioFromVideoFile } from "./videoProcessing.service.js";
 
 const asString = (value) => {
   if (value === null || value === undefined) return "";
@@ -87,17 +88,34 @@ export const uploadMediaFileToR2 = async (file, options = {}) => {
 
   const mimetype = asString(file?.mimetype) || "application/octet-stream";
   const resourceType = normalizeResourceType(options.resourceType, mimetype);
-  const buffer = await fs.readFile(filePath);
-  const key = buildObjectKey({ resourceType, folder: options.folder, fileName: file?.originalname });
-  const url = await putObjectToR2({ buffer, key, contentType: mimetype });
-  const size = Number(file?.size);
+  const shouldStripAudio = Boolean(options.stripAudio) && resourceType === "video";
 
-  return {
-    url,
-    publicId: key,
-    mimetype,
-    size: Number.isFinite(size) && size > 0 ? size : buffer.length,
-  };
+  let sourcePath = filePath;
+  let processedPath = null;
+
+  if (shouldStripAudio) {
+    const processed = await stripAudioFromVideoFile(filePath);
+    sourcePath = processed.outputPath;
+    if (processed.audioStripped) {
+      processedPath = processed.outputPath;
+    }
+  }
+
+  try {
+    const buffer = await fs.readFile(sourcePath);
+    const key = buildObjectKey({ resourceType, folder: options.folder, fileName: file?.originalname });
+    const url = await putObjectToR2({ buffer, key, contentType: mimetype });
+    const size = Number(file?.size);
+
+    return {
+      url,
+      publicId: key,
+      mimetype,
+      size: Number.isFinite(size) && size > 0 ? size : buffer.length,
+    };
+  } finally {
+    await cleanupProcessedVideoFile(processedPath, filePath);
+  }
 };
 
 export const uploadImageFileToR2 = async (file, options = {}) =>

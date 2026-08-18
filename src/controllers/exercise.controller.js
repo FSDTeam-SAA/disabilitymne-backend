@@ -122,6 +122,7 @@ const uploadMediaFilesToR2 = async (files, options = {}) => {
         uploadMediaFileToR2(file, {
           folder,
           resourceType,
+          stripAudio: Boolean(options.stripAudio),
         })
       )
     );
@@ -1170,6 +1171,7 @@ const getExerciseBodyFromRequest = async (req) => {
       demoVideos: await uploadMediaFilesToR2(demoVideoFiles, {
         folder: DEMO_VIDEO_FOLDER,
         resourceType: "video",
+        stripAudio: true,
         failureMessage: "Failed to upload demo videos to storage.",
       }),
     };
