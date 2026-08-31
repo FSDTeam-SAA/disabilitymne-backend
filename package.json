@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
+    "test": "node --test",
     "lint": "eslint .",
     "migrate:program-workout-days": "node scripts/migrateProgramWorkoutDays.js",
     "migrate:plan-keys": "node scripts/migrateSubscriptionPlanKeys.js",
