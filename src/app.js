@@ -37,7 +37,10 @@ app.use(
   express.json({
     limit: "10mb",
     verify: (req, res, buf) => {
-      if (req.originalUrl.startsWith("/api/v1/payments/webhook")) {
+      if (
+        req.originalUrl.startsWith("/api/v1/payments/webhook") ||
+        req.originalUrl.startsWith("/api/v1/payments/allsecure/callback")
+      ) {
         req.rawBody = Buffer.from(buf);
       }
     },
