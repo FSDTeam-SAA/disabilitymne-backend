@@ -151,6 +151,13 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 ## Payment APIs
 
 - `GET /api/v1/payments/plans` (public)
+- `POST /api/v1/payments/allsecure/checkout` (protected; creates a hosted `DEBIT`)
+- `POST /api/v1/payments/allsecure/checkout/confirm` (protected; verifies status with AllSecure)
+- `GET /api/v1/payments/allsecure/checkout/confirm/:sessionId` (protected)
+- `POST /api/v1/payments/allsecure/callback` (public; signed asynchronous notification)
+- `GET /api/v1/payments/allsecure/success` (public hosted-form redirect page)
+- `GET /api/v1/payments/allsecure/cancel` (public hosted-form redirect page)
+- `GET /api/v1/payments/allsecure/error` (public hosted-form redirect page)
 - `POST /api/v1/payments/checkout` (protected)
 - `GET /api/v1/payments/checkout/success` (public Stripe redirect page)
 - `GET /api/v1/payments/checkout/cancel` (public Stripe redirect page)
@@ -158,6 +165,15 @@ Use `Authorization: Bearer <token>` for protected endpoints.
 - `GET /api/v1/payments/checkout/confirm/:sessionId` (protected, webhook-free confirmation/polling)
 - `POST /api/v1/payments/webhook` (public, Stripe webhook endpoint)
 - `GET /api/v1/payments/me` (protected)
+
+AllSecure Android flow:
+
+1. Configure `ALLSECURE_BASE_URL`, `ALLSECURE_API_KEY`, `ALLSECURE_SHARED_SECRET`, `ALLSECURE_USERNAME`, `ALLSECURE_PASSWORD`, `ALLSECURE_CURRENCY=EUR`, and a publicly reachable HTTPS `BACKEND_PUBLIC_URL`.
+2. Call `POST /api/v1/payments/allsecure/checkout` with `planKey` and `billingDetails` (`address`, `city`, `postcode`, ISO subdivision `state`, and two-letter `country`), then open `data.checkoutUrl` in the app WebView.
+3. AllSecure posts a signed result to `/allsecure/callback`; the backend validates the raw-body HMAC, amount, currency, and payment reference before activating membership.
+4. When the hosted form returns to `/allsecure/success`, the app calls `/allsecure/checkout/confirm` with `data.sessionId`. The backend queries AllSecure directly; the browser redirect itself is never trusted as proof of payment.
+
+Use `https://asxgw.paymentsandbox.cloud` as `ALLSECURE_BASE_URL` for testing and `https://asxgw.com` for production. The supplied Hipotekarna sandbox connector was verified to accept EUR and reject USD, so the Android UI displays the configured numeric plan prices in euros. Credentials belong only in deployment environment variables—never in Flutter or source control.
 
 Flutter WebView flow (webhook-first, no custom success/cancel URL needed from app):
 1. Call `POST /api/v1/payments/checkout` with only `planKey`, then open `data.checkoutUrl` in WebView.
